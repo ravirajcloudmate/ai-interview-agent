@@ -3,9 +3,9 @@
 import { useAuth } from '@/contexts/AuthContext';
 import { SubscriptionBilling } from '@/app/components/SubscriptionBilling';
 import { useSearchParams } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 
-export default function SubscriptionPage() {
+function SubscriptionPageInner() {
   const { user, loading } = useAuth();
   const searchParams = useSearchParams();
   const [globalRefreshKey, setGlobalRefreshKey] = useState(0);
@@ -60,5 +60,20 @@ export default function SubscriptionPage() {
     <div className="min-h-screen bg-background">
       <SubscriptionBilling user={user} globalRefreshKey={globalRefreshKey} />
     </div>
+  );
+}
+
+export default function SubscriptionPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-2 text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    }>
+      <SubscriptionPageInner />
+    </Suspense>
   );
 }

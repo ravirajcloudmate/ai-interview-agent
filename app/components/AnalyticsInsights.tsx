@@ -275,10 +275,23 @@ export function AnalyticsInsights({ user, globalRefreshKey }: AnalyticsInsightsP
     };
   }, [companyId]);
 
-  // Focus refresh
+  // Focus/visibility refresh only if away long enough
   useEffect(() => {
-    const onFocus = () => setReloadKey(Date.now());
-    const onVis = () => { if (document.visibilityState === 'visible') setReloadKey(Date.now()); };
+    let lastHiddenAt = 0;
+    const triggerIfStale = () => {
+      const awayMs = Date.now() - lastHiddenAt;
+      if (awayMs > 15000) {
+        setReloadKey(Date.now());
+      }
+    };
+    const onFocus = () => triggerIfStale();
+    const onVis = () => {
+      if (document.visibilityState === 'hidden') {
+        lastHiddenAt = Date.now();
+      } else if (document.visibilityState === 'visible') {
+        triggerIfStale();
+      }
+    };
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onVis);
     return () => {
@@ -531,8 +544,12 @@ export function AnalyticsInsights({ user, globalRefreshKey }: AnalyticsInsightsP
                           <div className="flex-1">
                             <div className="text-sm font-medium text-foreground">
                               {ev.event_category && ev.event_action 
-                                ? `${ev.event_category} ${ev.event_action}`.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
-                                : ev.event_type?.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) || 'Event'
+                                ? `${ev.event_category} ${ev.event_action}`
+                                    .replace(/_/g, ' ')
+                                    .replace(/\b\w/g, (l: string) => l.toUpperCase())
+                                : ev.event_type
+                                    ?.replace(/_/g, ' ')
+                                    .replace(/\b\w/g, (l: string) => l.toUpperCase()) || 'Event'
                               }
                             </div>
                             <div className="text-xs text-muted-foreground mt-1">

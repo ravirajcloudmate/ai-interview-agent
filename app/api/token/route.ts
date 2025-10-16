@@ -1,32 +1,64 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { AccessToken } from 'livekit-server-sdk';
 
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001';
+
+/**
+ * Generate LiveKit token for candidate
+ * This proxies to the Python backend which has the agent dispatch logic
+ */
 export async function POST(req: NextRequest) {
   try {
-    const { room, identity } = await req.json();
+    const { room, identity, metadata } = await req.json();
+    
     if (!room || !identity) {
-      return NextResponse.json({ error: 'room and identity are required' }, { status: 400 });
+      return NextResponse.json({ 
+        error: 'room and identity are required' 
+      }, { status: 400 });
     }
 
-    const serverUrl = process.env.LIVEKIT_URL;
-    const apiKey = process.env.LIVEKIT_API_KEY;
-    const apiSecret = process.env.LIVEKIT_API_SECRET;
+    console.log('🎫 Requesting token from backend:', { room, identity });
 
-    if (!serverUrl || !apiKey || !apiSecret) {
-      return NextResponse.json({ 
-        error: 'LiveKit environment variables not configured. Please set LIVEKIT_URL, LIVEKIT_API_KEY, and LIVEKIT_API_SECRET in your .env.local file. See setup-env.md for instructions.' 
+    try {
+      // Get token from Python backend (includes agent dispatch)
+      const backendResponse = await fetch(`${BACKEND_URL}/token`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          room,
+          identity,
+          metadata: metadata || 'interview'
+        })
+      });
+
+      if (!backendResponse.ok) {
+        const errorData = await backendResponse.json();
+        throw new Error(errorData.detail || 'Failed to generate token');
+      }
+
+      const tokenData = await backendResponse.json();
+      console.log('✅ Token generated:', { room, identity });
+
+      return NextResponse.json({
+        url: tokenData.url,
+        token: tokenData.token,
+        identity: tokenData.identity,
+        room: tokenData.room
+      });
+
+    } catch (error: any) {
+      console.error('❌ Backend token generation failed:', error);
+      return NextResponse.json({
+        error: error.message || 'Failed to generate token from backend',
+        details: 'Make sure Python backend is running on http://localhost:8001'
       }, { status: 500 });
     }
 
-    const at = new AccessToken(apiKey, apiSecret, { identity });
-    at.addGrant({ room, roomJoin: true, canPublish: true, canSubscribe: true, canPublishData: true });
-    const token = await at.toJwt();
-
-    return NextResponse.json({ url: serverUrl, token });
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message || 'token mint failed' }, { status: 500 });
+    console.error('Token generation error:', e);
+    return NextResponse.json({ 
+      error: e?.message || 'Failed to generate token' 
+    }, { status: 500 });
   }
 }
-
-
-

@@ -29,7 +29,13 @@ import {
   AlertCircle,
   Calendar,
   User,
-  Building
+  Building,
+  X,
+  Upload,
+  FileText,
+  Sparkles,
+  Save,
+  Trash2
 } from 'lucide-react';
 import { Notification } from './Notification';
 
@@ -56,8 +62,238 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
     candidate_email: '',
     candidate_name: '',
     job_id: '',
-    expires_in_hours: 168 // 7 days default
+    expires_in_hours: 168, // 7 days default
+    candidate_skills: '',
+    experience: '',
+    interview_date: '',
+    interview_time: '',
+    candidate_projects: ''
   });
+
+  // Side drawer state
+  const [isSideDrawerOpen, setIsSideDrawerOpen] = useState(false);
+  const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
+  const [isUploadingPdf, setIsUploadingPdf] = useState(false);
+  const [generatedSummary, setGeneratedSummary] = useState<string>('');
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+
+  // View-only dialog state
+  const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
+  const [viewRecord, setViewRecord] = useState<any | null>(null);
+
+  // OpenAI API key
+  const OPENAI_API_KEY = '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';
+
+  // Generate combined summary using both profile details and PDF
+  const generateCombinedSummary = async (formData: any, pdfFile: File | null) => {
+    setIsGeneratingSummary(true);
+    setError(''); // Clear previous errors
+    
+    try {
+      // Check if we have required data
+      if (!formData.candidate_name || !formData.candidate_email) {
+        throw new Error('Please fill in candidate name and email first');
+      }
+
+      if (!pdfFile) {
+        throw new Error('Please upload a PDF resume first');
+      }
+
+      console.log('Generating combined summary from profile and PDF...');
+      
+      // First, analyze the PDF to extract content
+      let analysis;
+      try {
+        console.log('Analyzing PDF file:', pdfFile.name);
+        const formDataForPdf = new FormData();
+        formDataForPdf.append('file', pdfFile);
+
+        const pdfResponse = await fetch('/api/analyze-resume', {
+          method: 'POST',
+          body: formDataForPdf
+        });
+
+        if (!pdfResponse.ok) {
+          throw new Error(`PDF Analysis Error: ${pdfResponse.status}`);
+        }
+
+        const pdfData = await pdfResponse.json();
+        analysis = pdfData.analysis; // Extract the analysis from the response
+        console.log('PDF analysis successful:', analysis);
+        
+        // Validate that we got meaningful analysis
+        if (!analysis || (!analysis.candidateInfo && !analysis.skills && !analysis.experience)) {
+          throw new Error('PDF analysis returned empty or invalid data');
+        }
+        
+      } catch (apiError) {
+        console.error('PDF analysis failed:', apiError);
+        const errorMessage = apiError instanceof Error ? apiError.message : 'Unknown error';
+        throw new Error(`Failed to analyze PDF: ${errorMessage}. Please ensure the PDF is readable and try again.`);
+      }
+      
+      // Now generate combined summary using both profile data and PDF analysis
+      console.log('Sending combined data to API:', {
+        formData: formData,
+        analysisKeys: Object.keys(analysis),
+        analysisSample: {
+          candidateInfo: analysis.candidateInfo,
+          skills: analysis.skills,
+          experience: analysis.experience?.length || 0,
+          projects: analysis.projects?.length || 0
+        }
+      });
+      
+      const response = await fetch('/api/generate-summary', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          formData: formData,
+          analysis: analysis
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        console.error('API Error:', response.status, errorData);
+        throw new Error(errorData.error || `API Error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const summary = data.summary || 'Failed to generate summary';
+      
+      console.log('Combined summary generated successfully');
+      setGeneratedSummary(summary);
+      
+      // Save summary to database
+      try {
+        await saveCandidateSummary(formData, summary);
+      } catch (dbError) {
+        console.warn('Failed to save to database, but summary was generated:', dbError);
+        // Don't throw here, just log the warning
+      }
+      
+    } catch (error) {
+      console.error('Error generating summary:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to generate profile summary. Please try again.';
+      setError(errorMessage);
+    } finally {
+      setIsGeneratingSummary(false);
+    }
+  };
+
+  // Delete interview/invitation (removes from DB and refreshes list)
+  const handleDeleteInterview = async (invitationId: string) => {
+    try {
+      setError('');
+      // Try RPC first
+      try {
+        await supabase.rpc('delete_interview_invitation', { p_invitation_id: invitationId });
+      } catch (_) {
+        // Fallback: direct delete
+        await supabase.from('interview_invitations').delete().eq('id', invitationId);
+      }
+      await loadInterviews();
+      showNotification('success', 'Deleted', 'Invitation deleted successfully.');
+    } catch (e) {
+      console.error('Failed to delete interview:', e);
+      setError('Failed to delete invitation');
+    }
+  };
+
+  // View invitation details (read-only)
+  const openViewInvitation = async (invitationId: string) => {
+    try {
+      setError('');
+      // Fetch invitation
+      const { data: inv, error: invErr } = await supabase
+        .from('interview_invitations')
+        .select('*')
+        .eq('id', invitationId)
+        .single();
+
+      if (invErr) {
+        console.error('Failed to load invitation', invErr);
+        setError('Failed to load invitation');
+        return;
+      }
+
+      // Fetch summary if present
+      const { data: summaryRow } = await supabase
+        .from('candidate_summaries')
+        .select('*')
+        .eq('invitation_id', invitationId)
+        .limit(1)
+        .maybeSingle();
+
+      setViewRecord({ invitation: inv, summary: summaryRow });
+      setIsViewDialogOpen(true);
+    } catch (e) {
+      console.error('View load error', e);
+      setError('Failed to load details');
+    }
+  };
+
+  // Handle file upload - just store the file, don't generate summary yet
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file && file.type === 'application/pdf') {
+      setUploadedFile(file);
+      setError(''); // Clear any previous errors
+      console.log('PDF file uploaded:', file.name);
+    } else {
+      setError('Please upload a valid PDF file.');
+    }
+  };
+
+  // Save candidate summary to database
+  const saveCandidateSummary = async (formData: any, summary: string) => {
+    try {
+      console.log('💾 Attempting to save candidate summary...');
+      
+      // Try to save to candidate_summaries table
+      const { error } = await supabase
+        .from('candidate_summaries')
+        .insert([
+          {
+            candidate_name: formData.candidate_name,
+            candidate_email: formData.candidate_email,
+            job_id: formData.job_id || null,
+            skills: formData.candidate_skills || null,
+            experience: formData.experience || null,
+            projects: formData.candidate_projects || null,
+            interview_date: formData.interview_date || null,
+            interview_time: formData.interview_time || null,
+            summary: summary,
+            created_by: user.id,
+            company_id: companyIdState || null
+          }
+        ]);
+
+      if (error) {
+        // Check if table doesn't exist (PGRST205 error code)
+        if (error.code === 'PGRST205' || error.message?.includes('Could not find the table')) {
+          console.warn('⚠️ candidate_summaries table does not exist. Summary generated but not saved to database.');
+          console.warn('💡 Create the table in Supabase to enable saving summaries.');
+          // Don't show error to user - summary was still generated
+          return;
+        }
+        
+        // For other errors, just log
+        console.warn('⚠️ Could not save summary to database:', error.message);
+        return;
+      }
+      
+      console.log('✅ Candidate summary saved to database');
+      showNotification('success', 'Summary generated and saved!', '');
+    } catch (error) {
+      console.error('❌ Error saving summary:', error);
+      // Don't propagate error - summary was still generated successfully
+    }
+  };
+
 
   // Notification state
   const [notification, setNotification] = useState<{
@@ -89,7 +325,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
   useEffect(() => {
     const action = searchParams?.get('action');
     if (action === 'invite') {
-      setIsInviteDialogOpen(true);
+      setIsSideDrawerOpen(true);
     }
   }, [searchParams]);
 
@@ -215,10 +451,14 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
         return;
       }
 
-      // Fetch interview invitations (these are the invites we send)
+      // Fetch interview invitations with session data
       const { data: invitationsData, error: invitationsError } = await supabase
         .from('interview_invitations')
-        .select('*')
+        .select(`
+          *,
+          job_postings!inner(job_title, department, ai_interview_template, interview_mode, difficulty_level),
+          interview_sessions(id, status, started_at, ended_at, duration_seconds, session_token, room_id)
+        `)
         .eq('company_id', userData.company_id)
         .order('created_at', { ascending: false });
 
@@ -226,43 +466,44 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
         console.log('Interview invitations table not available, showing empty state');
         setInterviews([]);
       } else {
-        // Get job titles for invitations
-        const jobIds = [...new Set((invitationsData || []).map((inv: any) => inv.job_id).filter(Boolean))];
-        let jobTitles: { [key: string]: string } = {};
-        
-        if (jobIds.length > 0) {
-          const { data: jobsData } = await supabase
-            .from('job_postings')
-            .select('id, job_title')
-            .in('id', jobIds);
-          
-          if (jobsData) {
-            jobTitles = jobsData.reduce((acc: { [key: string]: string }, job: any) => {
-              acc[job.id] = job.job_title;
-              return acc;
-            }, {});
-          }
-        }
 
         // Transform invitation data to display format
-        const transformedData = (invitationsData || []).map((inv: any) => ({
-          id: inv.id,
-          candidateName: inv.candidate_name || inv.candidate_email.split('@')[0],
-          email: inv.candidate_email,
-          jobTitle: jobTitles[inv.job_id] || 'Position',
-          status: getInterviewStatus(inv.status),
-          progress: getProgressFromStatus(inv.status),
-          invitedDate: inv.created_at,
-          completedDate: inv.interview_completed_at,
-          duration: inv.interview_duration ? `${inv.interview_duration} min` : null,
-      score: null,
-          link: inv.interview_link,
-          invitation_id: inv.id,
-          job_id: inv.job_id,
-          type: 'invitation',
-          expires_at: inv.expires_at,
-          reminder_count: inv.reminder_sent_count || 0
-        }));
+        const transformedData = (invitationsData || []).map((inv: any) => {
+          const session = inv.interview_sessions?.[0]; // Get the first session if exists
+          
+          return {
+            id: inv.id,
+            candidateName: inv.candidate_name || inv.candidate_email.split('@')[0],
+            email: inv.candidate_email,
+            jobTitle: inv.job_postings?.job_title || 'Position',
+            jobDepartment: inv.job_postings?.department || '',
+            jobMode: inv.job_postings?.interview_mode || '',
+            jobDifficulty: inv.job_postings?.difficulty_level || '',
+            status: getInterviewStatus(inv.status, session?.status),
+            progress: getProgressFromStatus(inv.status, session?.status),
+            invitedDate: inv.created_at,
+            completedDate: inv.interview_completed_at || session?.ended_at,
+            link: inv.interview_link,
+            invitation_id: inv.id,
+            job_id: inv.job_id,
+            type: 'invitation',
+            expires_at: inv.expires_at,
+            reminder_count: inv.reminder_sent_count || 0,
+            // Session data
+            sessionId: session?.id,
+            sessionStatus: session?.status,
+            sessionToken: session?.session_token,
+            roomId: session?.room_id,
+            startedAt: session?.started_at,
+            duration: session?.duration_seconds,
+            // New fields from Invite Candidate form
+            candidate_skills: inv.candidate_skills || '',
+            experience: inv.experience || '',
+            interview_date: inv.interview_date || '',
+            interview_time: inv.interview_time || '',
+            candidate_projects: inv.candidate_projects || ''
+          };
+        });
         
         setInterviews(transformedData);
       }
@@ -303,7 +544,18 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
   };
 
   // Helper functions to transform status
-  const getInterviewStatus = (dbStatus: string) => {
+  const getInterviewStatus = (dbStatus: string, sessionStatus?: string) => {
+    // Priority: session status > invitation status
+    if (sessionStatus) {
+      switch (sessionStatus) {
+        case 'completed': return 'Completed';
+        case 'active': return 'In Progress';
+        case 'waiting': return 'Waiting for Candidate';
+        case 'cancelled': return 'Cancelled';
+        default: return 'Session Ready';
+      }
+    }
+    
     switch (dbStatus) {
       case 'completed': return 'Completed';
       case 'in_progress': case 'started': return 'In Progress';
@@ -313,7 +565,18 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
     }
   };
 
-  const getProgressFromStatus = (dbStatus: string) => {
+  const getProgressFromStatus = (dbStatus: string, sessionStatus?: string) => {
+    // Priority: session status > invitation status
+    if (sessionStatus) {
+      switch (sessionStatus) {
+        case 'completed': return 100;
+        case 'active': return 75;
+        case 'waiting': return 25;
+        case 'cancelled': return 0;
+        default: return 10;
+      }
+    }
+    
     switch (dbStatus) {
       case 'completed': return 100;
       case 'in_progress': case 'started': return 60;
@@ -328,8 +591,11 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
     switch (status) {
       case 'Completed': return <CheckCircle className="h-4 w-4 text-green-600" />;
       case 'In Progress': return <Play className="h-4 w-4 text-blue-600" />;
+      case 'Waiting for Candidate': return <Clock className="h-4 w-4 text-yellow-600" />;
+      case 'Session Ready': return <CheckCircle className="h-4 w-4 text-green-500" />;
       case 'Not Started': return <Clock className="h-4 w-4 text-orange-600" />;
       case 'Expired': return <XCircle className="h-4 w-4 text-red-600" />;
+      case 'Cancelled': return <XCircle className="h-4 w-4 text-red-600" />;
       default: return <Clock className="h-4 w-4" />;
     }
   };
@@ -338,8 +604,11 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
     switch (status) {
       case 'Completed': return 'default';
       case 'In Progress': return 'secondary';
+      case 'Waiting for Candidate': return 'outline';
+      case 'Session Ready': return 'default';
       case 'Not Started': return 'outline';
       case 'Expired': return 'destructive';
+      case 'Cancelled': return 'destructive';
       default: return 'secondary';
     }
   };
@@ -347,11 +616,23 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
   const copyToClipboard = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      // TODO: Add toast notification
-      console.log('Link copied to clipboard');
+      showNotification('success', 'Link copied', 'Interview link copied to clipboard');
     } catch (err) {
       console.error('Failed to copy to clipboard:', err);
+      showNotification('error', 'Copy failed', 'Failed to copy link to clipboard');
     }
+  };
+
+  const openInterviewLink = (sessionId: string) => {
+    const interviewUrl = `/interview-link?session=${sessionId}`;
+    window.open(interviewUrl, '_blank');
+  };
+
+  // Helper function to generate secure token
+  const generateSecureToken = () => {
+    return Array.from(crypto.getRandomValues(new Uint8Array(32)))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
   };
 
   const handleInviteCandidate = async () => {
@@ -379,7 +660,34 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
         return;
       }
 
-      // Create interview invitation using RPC
+      // Get job details with agent information
+      const { data: jobData } = await supabase
+        .from('job_postings')
+        .select('*, ai_interview_template')
+        .eq('id', inviteForm.job_id)
+        .single();
+
+      if (!jobData) {
+        setError('Job not found');
+        return;
+      }
+
+      // Get agent prompt template
+      const { data: agentData } = await supabase
+        .from('prompt_templates')
+        .select('*')
+        .eq('id', jobData.ai_interview_template)
+        .single();
+
+      console.log('📋 Job Data:', jobData);
+      console.log('🤖 Agent Data:', agentData);
+
+      // Generate unique room ID for LiveKit
+      const roomId = `room_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
+      console.log('🏠 Generated Room ID:', roomId);
+
+      // Create interview invitation in database
       const { data: invitationData, error: inviteError } = await supabase
         .rpc('create_interview_invitation', {
           p_company_id: userData.company_id,
@@ -396,6 +704,64 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
         return;
       }
 
+      console.log('✅ Invitation created:', invitationData);
+
+      // Update extra optional fields captured in the form
+      const createdInvitationId = invitationData[0]?.id || invitationData;
+      await supabase
+        .from('interview_invitations')
+        .update({
+          candidate_skills: inviteForm.candidate_skills || null,
+          experience: inviteForm.experience || null,
+          interview_date: inviteForm.interview_date || null,
+          interview_time: inviteForm.interview_time || null,
+          candidate_projects: inviteForm.candidate_projects || null
+        })
+        .eq('id', createdInvitationId);
+
+      // Create interview session with LiveKit room
+      const sessionData = {
+        invitation_id: createdInvitationId,
+        job_id: inviteForm.job_id,
+        agent_id: agentData?.id || jobData.ai_interview_template,
+        agent_prompt: agentData?.prompt_text || 'Conduct a professional interview for the position.',
+        candidate_email: inviteForm.candidate_email,
+        candidate_name: inviteForm.candidate_name || inviteForm.candidate_email.split('@')[0],
+        room_id: roomId,
+        session_token: `session_${Date.now()}`,
+        status: 'waiting',
+        video_enabled: true,
+        audio_enabled: true
+      };
+
+      // Save session to database
+      const { data: session, error: sessionError } = await supabase
+        .from('interview_sessions')
+        .insert([sessionData])
+        .select()
+        .single();
+
+      if (sessionError) {
+        console.error('⚠️ Session creation error (may not be critical):', sessionError);
+        // Continue anyway - table might not exist yet
+      }
+
+      console.log('✅ Session created:', session);
+
+      // Create LiveKit room and get token
+      const sessionId = session?.id || sessionData.session_token;
+      const interviewLink = `${window.location.origin}/interview/${sessionId}?room=${roomId}`;
+
+      console.log('🔗 Interview Link:', interviewLink);
+
+      // Update invitation with the new interview link
+      await supabase
+        .from('interview_invitations')
+        .update({
+          interview_link: interviewLink
+        })
+        .eq('id', createdInvitationId);
+
       // Send email invitation
       const emailResponse = await fetch('/api/send-interview-invitation', {
         method: 'POST',
@@ -403,8 +769,8 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
         body: JSON.stringify({
           email: inviteForm.candidate_email,
           candidateName: inviteForm.candidate_name || inviteForm.candidate_email.split('@')[0],
-          interviewLink: invitationData[0]?.interview_link,
-          jobTitle: jobPostings.find(job => job.id === inviteForm.job_id)?.job_title || 'Position',
+          interviewLink: interviewLink,
+          jobTitle: jobData.job_title,
           companyName: user.company || 'Company'
         })
       });
@@ -412,17 +778,28 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
       if (!emailResponse.ok) {
         const errorData = await emailResponse.json().catch(() => ({}));
         console.error('Email sending failed:', errorData);
-        setError('Invitation created but email failed to send: ' + (errorData.error || 'Unknown error'));
-      } else {
-        console.log('Interview invitation sent successfully');
         
-        // Show success notification
-        const jobTitle = jobPostings.find(job => job.id === inviteForm.job_id)?.job_title || 'Position';
-        const candidateName = inviteForm.candidate_name || inviteForm.candidate_email.split('@')[0];
+        // Show warning but don't fail the entire process
+        showNotification(
+          'success',
+          'Interview invitation created',
+          `${inviteForm.candidate_name || inviteForm.candidate_email} has been invited for ${jobData.job_title} position. Email sending failed - please share the link manually.`
+        );
+        
+        // Copy link to clipboard for manual sharing
+        try {
+          await navigator.clipboard.writeText(interviewLink);
+          console.log('Interview link copied to clipboard for manual sharing:', interviewLink);
+        } catch (clipboardError) {
+          console.error('Failed to copy link to clipboard:', clipboardError);
+        }
+      } else {
+        console.log('✅ Interview invitation sent successfully');
+        
         showNotification(
           'success',
           'Interview invitation sent',
-          `${candidateName} has been invited for ${jobTitle} position.`
+          `${inviteForm.candidate_name || inviteForm.candidate_email} has been invited for ${jobData.job_title} position.`
         );
       }
 
@@ -431,9 +808,16 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
         candidate_email: '',
         candidate_name: '',
         job_id: '',
-        expires_in_hours: 168
+        expires_in_hours: 168,
+        candidate_skills: '',
+        experience: '',
+        interview_date: '',
+        interview_time: '',
+        candidate_projects: ''
       });
-      setIsInviteDialogOpen(false);
+      setUploadedFile(null);
+      setGeneratedSummary('');
+      setIsSideDrawerOpen(false);
       await loadInterviews();
 
     } catch (err) {
@@ -520,100 +904,20 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
     <div className="p-6 max-w-7xl mx-auto">
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-3xl font-bold mb-2">Interview Management</h1>
+          <div className="flex items-center gap-3 mb-2">
+            <div className="bg-[#e30d0d] text-white px-3 py-1 rounded-md font-semibold">INTERVIEW</div>
+            <h1 className="text-3xl font-bold"> Management</h1>
+          </div>
           <p className="text-muted-foreground">Track interview links, candidate progress, and manage invitations.</p>
         </div>
-        <Dialog open={isInviteDialogOpen} onOpenChange={setIsInviteDialogOpen}>
-          <DialogTrigger asChild>
-            <Button size="lg" className="gap-2">
+        <Button 
+          size="lg" 
+          className="gap-2 bg-[#e30d0d] hover:bg-[#c50c0c] text-white"
+          onClick={() => setIsSideDrawerOpen(true)}
+        >
               <Plus className="h-4 w-4" />
               Invite Candidate
             </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-lg">
-            <DialogHeader>
-              <DialogTitle>Invite New Candidate</DialogTitle>
-              <DialogDescription>Generate interview link and send invitation to candidate</DialogDescription>
-            </DialogHeader>
-            
-            {error && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
-                <p className="text-red-800 text-sm">{error}</p>
-              </div>
-            )}
-
-            <div className="space-y-4 pt-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-sm font-medium">Candidate Email *</label>
-                  <Input 
-                    placeholder="candidate@email.com" 
-                    className="mt-1"
-                    value={inviteForm.candidate_email}
-                    onChange={(e) => setInviteForm({...inviteForm, candidate_email: e.target.value})}
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-medium">Candidate Name</label>
-                  <Input 
-                    placeholder="John Doe" 
-                    className="mt-1"
-                    value={inviteForm.candidate_name}
-                    onChange={(e) => setInviteForm({...inviteForm, candidate_name: e.target.value})}
-                  />
-                </div>
-              </div>
-              
-              <div>
-                <label className="text-sm font-medium">Job Position *</label>
-                <select 
-                  className="w-full mt-1 p-2 border border-input rounded-md bg-background"
-                  value={inviteForm.job_id}
-                  onChange={(e) => setInviteForm({...inviteForm, job_id: e.target.value})}
-                >
-                  <option value="">Select a job position</option>
-                  {jobPostings.map(job => (
-                    <option key={job.id} value={job.id}>
-                      {job.job_title} - {job.department}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="text-sm font-medium">Invitation Expires In</label>
-                <select 
-                  className="w-full mt-1 p-2 border border-input rounded-md bg-background"
-                  value={inviteForm.expires_in_hours}
-                  onChange={(e) => setInviteForm({...inviteForm, expires_in_hours: parseInt(e.target.value)})}
-                >
-                  <option value={24}>24 Hours</option>
-                  <option value={72}>3 Days</option>
-                  <option value={168}>7 Days (Recommended)</option>
-                  <option value={336}>14 Days</option>
-                </select>
-              </div>
-
-              <div className="flex gap-3 pt-4">
-                <Button 
-                  className="flex-1 gap-2" 
-                  onClick={handleInviteCandidate}
-                  disabled={inviteLoading}
-                >
-                  {inviteLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                  Send Invitation
-                </Button>
-                <Button 
-                  variant="outline"
-                  onClick={() => setIsInviteDialogOpen(false)}
-                  disabled={inviteLoading}
-                >
-                  Cancel
-                </Button>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
       </div>
 
       {/* Search and Filters */}
@@ -665,7 +969,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
                   {interviews.length === 0 ? 'Start by inviting candidates for interviews.' : 'Try adjusting your search or filters.'}
                 </p>
                 {interviews.length === 0 && (
-                  <Button onClick={() => setIsInviteDialogOpen(true)} className="gap-2">
+                  <Button onClick={() => setIsSideDrawerOpen(true)} className="gap-2 bg-[#e30d0d] hover:bg-[#c50c0c] text-white">
                     <Plus className="h-4 w-4" />
                     Invite Your First Candidate
                   </Button>
@@ -673,129 +977,131 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
               </CardContent>
             </Card>
           ) : (
-            filteredInterviews.map((interview) => (
-            <Card key={interview.id}>
-              <CardHeader>
-                <div className="flex items-start justify-between">
-                  <div className="flex items-start gap-4">
-                    <Avatar className="h-12 w-12">
-                      <AvatarFallback>
-                        {interview.candidateName.split(' ').map((n: string) => n[0]).join('')}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <h3 className="font-semibold">{interview.candidateName}</h3>
-                        {getStatusIcon(interview.status)}
-                        <Badge variant={getStatusColor(interview.status) as any}>
-                          {interview.status}
-                        </Badge>
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+              {filteredInterviews.map((interview) => (
+                <Card key={interview.id} className="p-4">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-start gap-3">
+                      <Avatar className="h-10 w-10">
+                        <AvatarFallback>
+                          {interview.candidateName.split(' ').map((n: string) => n[0]).join('')}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-semibold text-sm leading-tight">{interview.candidateName}</h3>
+                          {getStatusIcon(interview.status)}
+                          <Badge variant={getStatusColor(interview.status) as any} className="text-[10px]">
+                            {interview.status}
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5">{interview.email}</p>
+                        <Badge variant="secondary" className="mt-2 text-[10px] font-medium">{interview.jobTitle}</Badge>
                       </div>
-                      <p className="text-sm text-muted-foreground">{interview.email}</p>
-                      <p className="text-sm font-medium">{interview.jobTitle}</p>
                     </div>
-                  </div>
-                  <div className="text-right text-sm text-muted-foreground">
-                    <p>Invited: {formatDate(interview.invitedDate)}</p>
-                    {interview.completedDate && (
-                      <p>Completed: {formatDate(interview.completedDate)}</p>
-                    )}
-                    {interview.type === 'invitation' && interview.expires_at && (
-                      <p className={`${new Date(interview.expires_at) < new Date() ? 'text-red-600' : 'text-orange-600'}`}>
-                        Expires: {formatDate(interview.expires_at)}
-                      </p>
-                    )}
-                    {interview.reminder_count > 0 && (
-                      <p className="text-blue-600">
-                        {interview.reminder_count} reminder{interview.reminder_count > 1 ? 's' : ''} sent
-                      </p>
-                    )}
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {/* Progress Bar */}
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-sm">
-                      <span>Interview Progress</span>
-                      <span>{interview.progress}%</span>
+                    <div className="text-right">
+                      <p className="text-[11px] text-muted-foreground">Invited: {formatDate(interview.invitedDate)}</p>
+                      {interview.type === 'invitation' && (
+                        interview.interview_date ? (
+                          <p className="text-[11px] text-green-700">{formatDate(interview.interview_date)}{interview.interview_time ? ` • ${interview.interview_time}` : ''}</p>
+                        ) : (
+                          interview.expires_at && (
+                            <p className={`text-[11px] ${new Date(interview.expires_at) < new Date() ? 'text-red-600' : 'text-orange-600'}`}>{formatDate(interview.expires_at)}</p>
+                          )
+                        )
+                      )}
                     </div>
-                    <Progress value={interview.progress} className="h-2" />
                   </div>
 
-                  {/* Details */}
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
-                    <div>
-                      <span className="text-muted-foreground">Duration: </span>
-                      <span>{interview.duration || 'Not started'}</span>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Score: </span>
-                      <span>{interview.score ? `${interview.score}%` : 'Pending'}</span>
-                    </div>
-                    {interview.type === 'invitation' && (
-                      <div>
-                        <span className="text-muted-foreground">Expires: </span>
-                        <span className={new Date(interview.expires_at) < new Date() ? 'text-red-600 font-medium' : 'text-orange-600'}>
-                          {formatDate(interview.expires_at)}
-                        </span>
-                      </div>
-                    )}
+                  {/* Footer actions */}
+                  <div className="mt-3 flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <span className="text-muted-foreground">Link: </span>
+                      {interview.sessionId && (
+                        <Button 
+                          size="sm" 
+                          variant="default"
+                          className="h-7 px-2 bg-green-600 hover:bg-green-700 text-white text-[11px]"
+                          onClick={() => openInterviewLink(interview.sessionId)}
+                          title="Join interview"
+                        >
+                          <Play className="h-3 w-3" />
+                          Join Interview
+                        </Button>
+                      )}
                       <Button 
                         size="sm" 
-                        variant="ghost" 
-                        className="h-6 px-2 gap-1 text-blue-600"
+                        variant="ghost"
+                        className="h-7 px-2 text-blue-600"
                         onClick={() => copyToClipboard(interview.link)}
+                        title="Copy link"
                       >
                         <Link2 className="h-3 w-3" />
-                        Copy
+                        <span className="text-[11px]">Copy</span>
                       </Button>
+                      {interview.status === 'Not Started' && (
+                        <Button 
+                          size="sm" 
+                          variant="ghost"
+                          className="h-7 px-2"
+                          onClick={() => sendReminder(interview.id, interview.email)}
+                          title="Send reminder"
+                        >
+                          <Send className="h-3 w-3" />
+                          <span className="text-[11px]">Remind</span>
+                        </Button>
+                      )}
                     </div>
+                    {interview.type === 'invitation' && (
+                      <div className="flex items-center gap-1">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 px-2"
+                          title="View"
+                          onClick={() => openViewInvitation(interview.invitation_id || interview.id)}
+                        >
+                          <Eye className="h-3 w-3" />
+                          <span className="text-[11px]">View</span>
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7 text-red-600 hover:text-red-700"
+                          title="Delete Invitation"
+                          onClick={() => handleDeleteInterview(interview.invitation_id || interview.id)}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    )}
                   </div>
 
-                  {/* Actions */}
-                  <div className="flex items-center gap-2 pt-2">
-                    {interview.status === 'Completed' && interview.type === 'interview' && (
-                      <Button size="sm" variant="outline" className="gap-1">
-                        <Eye className="h-4 w-4" />
-                        View Report
-                      </Button>
-                    )}
-                    {interview.status === 'Not Started' && (
-                      <Button 
-                        size="sm" 
-                        variant="outline" 
-                        className="gap-1"
-                        onClick={() => sendReminder(interview.id, interview.email)}
-                      >
-                        <Send className="h-4 w-4" />
-                        Send Reminder
-                      </Button>
-                    )}
-                    {interview.status === 'Expired' && interview.type === 'invitation' && (
-                      <Button size="sm" variant="outline" className="gap-1">
-                        <RotateCcw className="h-4 w-4" />
-                        Extend Deadline
-                      </Button>
-                    )}
-                    {interview.type === 'invitation' && (
-                      <Button size="sm" variant="ghost" className="gap-1 text-blue-600">
-                        <Calendar className="h-4 w-4" />
-                        Invitation
-                      </Button>
-                    )}
-                    <Button size="sm" variant="ghost" className="gap-1">
-                      <Mail className="h-4 w-4" />
-                      Contact
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            ))
+                  {/* Session Status Info */}
+                  {interview.sessionId && (
+                    <div className="mt-2 pt-2 border-t border-gray-100">
+                      <div className="flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="text-gray-500">Session:</span>
+                          <Badge variant="outline" className="text-[10px]">
+                            {interview.sessionStatus || 'waiting'}
+                          </Badge>
+                        </div>
+                        {interview.startedAt && (
+                          <span className="text-gray-500">
+                            Started: {formatDate(interview.startedAt)}
+                          </span>
+                        )}
+                        {interview.duration && (
+                          <span className="text-green-600 font-medium">
+                            {Math.floor(interview.duration / 60)}m {interview.duration % 60}s
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </Card>
+              ))}
+            </div>
           )}
         </TabsContent>
 
@@ -872,6 +1178,341 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
         </TabsContent>
       </Tabs>
 
+        {/* Side Drawer for Invite Candidate */}
+        {isSideDrawerOpen && (
+          <div className="fixed inset-0 z-50 flex">
+            {/* Backdrop */}
+            <div 
+              className="flex-1 bg-black/20 backdrop-blur-sm"
+              onClick={() => setIsSideDrawerOpen(false)}
+            />
+            
+            {/* Drawer Panel */}
+            <div className="w-full max-w-2xl bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-700 shadow-xl">
+              <div className="flex h-full flex-col">
+                {/* Header */}
+                <div className="flex items-center justify-between border-b px-6 py-4">
+                  <div>
+                    <h2 className="text-xl font-semibold">Invite New Candidate</h2>
+                    <p className="text-sm text-muted-foreground">Create comprehensive candidate profile</p>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setIsSideDrawerOpen(false)}
+                    className="h-8 w-8 p-0"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
+
+                {/* Content */}
+                <div className="flex-1 overflow-y-auto px-6 py-4">
+                  {error && (
+                    <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+                      <p className="text-red-800 text-sm">{error}</p>
+                    </div>
+                  )}
+
+                  <div className="space-y-6">
+                    {/* Basic Information */}
+                    <div>
+                      <h3 className="text-lg font-medium mb-4">Basic Information</h3>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-sm font-medium">Candidate Name *</label>
+                          <Input 
+                            placeholder="John Doe" 
+                            className="mt-1"
+                            value={inviteForm.candidate_name}
+                            onChange={(e) => setInviteForm({...inviteForm, candidate_name: e.target.value})}
+                          />
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium">Candidate Email *</label>
+                          <Input 
+                            placeholder="candidate@email.com" 
+                            className="mt-1"
+                            value={inviteForm.candidate_email}
+                            onChange={(e) => setInviteForm({...inviteForm, candidate_email: e.target.value})}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Job Information */}
+                    <div>
+                      <h3 className="text-lg font-medium mb-4">Job Information</h3>
+                      <div>
+                        <label className="text-sm font-medium">Job Posting *</label>
+                        <select 
+                          className="w-full mt-1 p-2 border border-input rounded-md bg-background"
+                          value={inviteForm.job_id}
+                          onChange={(e) => setInviteForm({...inviteForm, job_id: e.target.value})}
+                        >
+                          <option value="">Select a job position</option>
+                          {jobPostings.map(job => (
+                            <option key={job.id} value={job.id}>
+                              {job.job_title} - {job.department}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Skills and Experience */}
+                    <div>
+                      <h3 className="text-lg font-medium mb-4">Skills & Experience</h3>
+                      <div className="space-y-4">
+                        <div>
+                          <label className="text-sm font-medium">Candidate Skills</label>
+                          <Input 
+                            placeholder="React, JavaScript, Node.js, Python..." 
+                            className="mt-1"
+                            value={inviteForm.candidate_skills}
+                            onChange={(e) => setInviteForm({...inviteForm, candidate_skills: e.target.value})}
+                          />
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium">Experience</label>
+                          <Input 
+                            placeholder="5 years in software development..." 
+                            className="mt-1"
+                            value={inviteForm.experience}
+                            onChange={(e) => setInviteForm({...inviteForm, experience: e.target.value})}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Interview Schedule */}
+                    <div>
+                      <h3 className="text-lg font-medium mb-4">Interview Schedule</h3>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-sm font-medium">Interview Date</label>
+                          <Input 
+                            type="date"
+                            className="mt-1"
+                            value={inviteForm.interview_date}
+                            onChange={(e) => setInviteForm({...inviteForm, interview_date: e.target.value})}
+                          />
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium">Interview Time</label>
+                          <Input 
+                            type="time"
+                            className="mt-1"
+                            value={inviteForm.interview_time}
+                            onChange={(e) => setInviteForm({...inviteForm, interview_time: e.target.value})}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Projects */}
+                    <div>
+                      <h3 className="text-lg font-medium mb-4">Candidate Projects</h3>
+                      <div>
+                        <label className="text-sm font-medium">Projects</label>
+                        <textarea 
+                          placeholder="E-commerce platform, Mobile app, API development..."
+                          className="w-full mt-1 p-2 border border-input rounded-md bg-background h-20 resize-none"
+                          value={inviteForm.candidate_projects}
+                          onChange={(e) => setInviteForm({...inviteForm, candidate_projects: e.target.value})}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Profile Summary Generation */}
+                    <div>
+                      <h3 className="text-lg font-medium mb-4">Profile Summary</h3>
+                      <div className="space-y-4">
+                        <div className="flex gap-3">
+                          <Button
+                            onClick={() => generateCombinedSummary(inviteForm, uploadedFile)}
+                            disabled={isGeneratingSummary || !inviteForm.candidate_name || !inviteForm.candidate_email || !uploadedFile}
+                            className="flex-1 gap-2"
+                          >
+                            {isGeneratingSummary ? (
+                              <>
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                Generating Combined Summary...
+                              </>
+                            ) : (
+                              <>
+                                <Sparkles className="h-4 w-4" />
+                                Generate Combined Summary
+                              </>
+                            )}
+                          </Button>
+                        </div>
+                        
+                        {!uploadedFile && (
+                          <p className="text-sm text-amber-600 bg-amber-50 p-2 rounded">
+                            ⚠️ Please upload a PDF resume to generate the summary
+                          </p>
+                        )}
+                        
+                        {uploadedFile && (
+                          <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                            <p className="text-sm text-green-800">
+                              ✓ PDF uploaded: <span className="font-medium">{uploadedFile.name}</span>
+                            </p>
+                            <p className="text-xs text-green-600 mt-1">
+                              Ready to generate combined summary with profile + PDF content
+                            </p>
+                          </div>
+                        )}
+
+                        {/* PDF Upload */}
+                        <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
+                          <Upload className="h-8 w-8 mx-auto mb-2 text-gray-400" />
+                          <p className="text-sm text-gray-600 mb-2">
+                            <span className="font-medium text-red-600">*Required:</span> Upload candidate's resume PDF
+                          </p>
+                          <input
+                            type="file"
+                            accept=".pdf"
+                            onChange={handleFileUpload}
+                            className="hidden"
+                            id="pdf-upload"
+                          />
+                          <label
+                            htmlFor="pdf-upload"
+                            className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 cursor-pointer"
+                          >
+                            <FileText className="h-4 w-4 mr-2" />
+                            Choose PDF File
+                          </label>
+                          {uploadedFile && (
+                            <p className="text-xs text-green-600 mt-2">
+                              ✓ {uploadedFile.name} uploaded successfully
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Generated Summary Display */}
+                        {generatedSummary && (
+                          <div className="bg-gray-50 border rounded-lg p-4">
+                            <div className="flex items-center justify-between mb-2">
+                              <h4 className="font-medium">Generated Combined Summary</h4>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setGeneratedSummary('')}
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                            </div>
+                            <p className="text-xs text-gray-500 mb-2">
+                              ✓ Generated from profile details + PDF resume analysis
+                            </p>
+                            <div className="text-sm text-gray-700 whitespace-pre-wrap max-h-60 overflow-y-auto">
+                              {generatedSummary}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Footer */}
+                <div className="border-t px-6 py-4">
+                  <div className="flex gap-3">
+                    <Button
+                      onClick={handleInviteCandidate}
+                      disabled={inviteLoading || !inviteForm.candidate_email || !inviteForm.job_id}
+                      className="flex-1 gap-2 bg-[#e30d0d] hover:bg-[#c50c0c] text-white"
+                    >
+                      {inviteLoading ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Sending Invite...
+                        </>
+                      ) : (
+                        <>
+                          <Send className="h-4 w-4" />
+                          Invite Candidate
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => setIsSideDrawerOpen(false)}
+                      disabled={inviteLoading}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* View-only dialog */}
+        <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Invitation Details</DialogTitle>
+              <DialogDescription>Read-only view of candidate and summary</DialogDescription>
+            </DialogHeader>
+            {viewRecord && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <div className="text-muted-foreground">Candidate Name</div>
+                    <div className="font-medium">{viewRecord.invitation.candidate_name || '—'}</div>
+                  </div>
+                  <div>
+                    <div className="text-muted-foreground">Candidate Email</div>
+                    <div className="font-medium">{viewRecord.invitation.candidate_email}</div>
+                  </div>
+                  <div>
+                    <div className="text-muted-foreground">Interview Date</div>
+                    <div className="font-medium">{viewRecord.invitation.interview_date ? formatDate(viewRecord.invitation.interview_date) : '—'}</div>
+                  </div>
+                  <div>
+                    <div className="text-muted-foreground">Interview Time</div>
+                    <div className="font-medium">{viewRecord.invitation.interview_time || '—'}</div>
+                  </div>
+                  <div className="col-span-2">
+                    <div className="text-muted-foreground">Skills</div>
+                    <div className="font-medium">{viewRecord.invitation.candidate_skills || '—'}</div>
+                  </div>
+                  <div className="col-span-2">
+                    <div className="text-muted-foreground">Experience</div>
+                    <div className="font-medium whitespace-pre-wrap">{viewRecord.invitation.experience || '—'}</div>
+                  </div>
+                  <div className="col-span-2">
+                    <div className="text-muted-foreground">Projects</div>
+                    <div className="font-medium whitespace-pre-wrap">{viewRecord.invitation.candidate_projects || '—'}</div>
+                  </div>
+                </div>
+
+                {/* Summary section */}
+                <div className="border-t pt-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="font-semibold">Generated Summary</h4>
+                    {viewRecord.summary?.created_at && (
+                      <span className="text-xs text-muted-foreground">Saved {formatDate(viewRecord.summary.created_at)}</span>
+                    )}
+                  </div>
+                  <div className="text-sm whitespace-pre-wrap bg-muted/30 rounded-md p-3">
+                    {viewRecord.summary?.summary || 'No summary saved'}
+                  </div>
+                </div>
+
+                {/* PDF note */}
+                <div className="border-t pt-3 text-xs text-muted-foreground">
+                  PDF uploaded at invite time is used for this summary (stored as text extraction). Original file storage is not retained in DB.
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
       {/* Notification */}
       <Notification
         type={notification.type}

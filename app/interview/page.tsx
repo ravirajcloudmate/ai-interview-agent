@@ -398,7 +398,7 @@ export default function InterviewPage() {
         const identity = `candidate-${candidateId}`;
         
         // Step 1: Get candidate token from backend
-        const tokenResp = await fetch('http://localhost:8000/token', {
+        const tokenResp = await fetch('http://localhost:8001/token', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 

@@ -602,12 +602,32 @@ export function CompanyProfile({ user, globalRefreshKey }: CompanyProfileProps) 
       console.log('All data saved successfully:', savedData);
       setSuccess(`✅ Company "${companyName}" and industry "${industry}" saved successfully!`);
       
+      // Update auth user metadata with company info
+      const { data: currentAuthData } = await supabase.auth.getUser();
+      if (currentAuthData?.user) {
+        await supabase.auth.updateUser({
+          data: {
+            company_name: companyName,
+            company_id: cid
+          }
+        });
+        console.log('✅ Updated user metadata with company info');
+      }
+      
       // Broadcast company name update to other components
       localStorage.setItem('companyName', companyName);
       localStorage.setItem('branding_company_name', companyName);
       window.dispatchEvent(new CustomEvent('branding:updated', { 
-        detail: { companyName: companyName } 
+        detail: { companyName: companyName, companyId: cid } 
       }));
+      
+      // Trigger global refresh
+      window.dispatchEvent(new Event('refresh'));
+      
+      // Force reload after save to update all components
+      setTimeout(() => {
+        window.location.reload();
+      }, 1500);
       
       // Clear success message after 4 seconds
       setTimeout(() => setSuccess(null), 4000);

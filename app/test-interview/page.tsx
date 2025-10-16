@@ -13,7 +13,8 @@ export default function TestInterviewPage() {
   const [roomName, setRoomName] = useState('test-interview-room')
   const [candidateId, setCandidateId] = useState('test-candidate-123')
 
-  const addResult = (test: string, status: 'success' | 'error' | 'warning', message: string, details?: any) => {
+  type ResultStatus = 'success' | 'error' | 'warning' | 'info'
+  const addResult = (test: string, status: ResultStatus, message: string, details?: any) => {
     setTestResults(prev => [...prev, {
       test,
       status,

@@ -14,10 +14,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "InterviewAI - Dashboard",
+  title: "Jobly.Ai - Dashboard",
   description: "AI-powered interview management platform",
   icons: {
-    icon: '/favicon.svg',
+    icon: [
+      { url: '/favicon.svg', type: 'image/svg+xml' },
+      { url: '/favicon.ico', type: 'image/x-icon' }
+    ],
     shortcut: '/favicon.svg',
     apple: '/favicon.svg',
   },

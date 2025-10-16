@@ -579,40 +579,48 @@ export function DashboardHome({ user, globalRefreshKey }: DashboardHomeProps) {
   }
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold mb-2">Welcome back, {user?.name || user?.email?.split('@')[0] || 'User'}!</h1>
-        <p className="text-muted-foreground">Here's what's happening with your hiring process today.</p>
+    <div className="max-w-7xl mx-auto">
+      {/* Fixed Header */}
+      <div className="sticky top-0 z-10 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b">
+        <div className="p-6">
+          {/* Welcome Section */}
+          <div className="mb-6">
+            <h1 className="text-3xl font-bold mb-2">Welcome back, {user?.name || user?.email?.split('@')[0] || 'User'}!</h1>
+            <p className="text-muted-foreground">Here's what's happening with your hiring process today.</p>
+          </div>
+
+          {/* Quick Actions */}
+          <div className="flex flex-wrap gap-4">
+            <Button size="lg" className="gap-2" asChild>
+              <a href="/?module=jobs&action=create">
+              <Plus className="h-4 w-4" />
+              Create Job Posting
+              </a>
+            </Button>
+            <Button variant="outline" size="lg" className="gap-2" asChild>
+              <a href="/?module=interviews">
+                <Users className="h-4 w-4" />
+                Start Interview
+              </a>
+            </Button>
+            <Button variant="outline" size="lg" className="gap-2" asChild>
+              <a href="/?module=interviews&action=invite">
+              <Users className="h-4 w-4" />
+              Invite Candidate
+              </a>
+            </Button>
+            <Button variant="outline" size="lg" className="gap-2" asChild>
+              <a href="/?module=reports">
+              <FileText className="h-4 w-4" />
+              View Reports
+              </a>
+            </Button>
+          </div>
+        </div>
       </div>
 
-      {/* Quick Actions */}
-      <div className="flex flex-wrap gap-4 mb-8">
-        <Button size="lg" className="gap-2" asChild>
-          <a href="/?module=jobs&action=create">
-          <Plus className="h-4 w-4" />
-          Create Job Posting
-          </a>
-        </Button>
-        <Button variant="outline" size="lg" className="gap-2" asChild>
-          <a href="/?module=interviews">
-            <Users className="h-4 w-4" />
-            Start Interview
-          </a>
-        </Button>
-        <Button variant="outline" size="lg" className="gap-2" asChild>
-          <a href="/?module=interviews&action=invite">
-          <Users className="h-4 w-4" />
-          Invite Candidate
-          </a>
-        </Button>
-        <Button variant="outline" size="lg" className="gap-2" asChild>
-          <a href="/?module=reports">
-          <FileText className="h-4 w-4" />
-          View Reports
-          </a>
-        </Button>
-      </div>
+      {/* Scrollable Content */}
+      <div className="p-6">
 
       {/* Stats Overview - Circular Graphs */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
@@ -742,6 +750,7 @@ export function DashboardHome({ user, globalRefreshKey }: DashboardHomeProps) {
           </div>
         </CardContent>
       </Card>
+      </div> {/* End of scrollable content */}
     </div>
   );
 }

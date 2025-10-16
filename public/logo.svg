@@ -1,10 +1,21 @@
-<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+<svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="headGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e40af" stop-opacity="1" />
+      <stop offset="50%" stop-color="#3b82f6" stop-opacity="1" />
+      <stop offset="100%" stop-color="#60a5fa" stop-opacity="1" />
+    </linearGradient>
+  </defs>
+  
   <!-- Black background -->
-  <rect width="32" height="32" fill="black" rx="6"/>
-  <!-- Head silhouette - blue -->
-  <path d="M16 4C24.84 4 32 11.16 32 20C32 28.84 24.84 36 16 36C7.16 36 0 28.84 0 20C0 11.16 7.16 4 16 4Z" fill="#3B82F6"/>
-  <!-- Brain area rectangle - darker blue -->
-  <rect x="9" y="9" width="14" height="11" rx="3" fill="#1E40AF"/>
-  <!-- Play button - black triangle -->
-  <path d="M12.5 12L12.5 20L20.5 16L12.5 12Z" fill="black"/>
+  <rect width="120" height="120" fill="#000000"/>
+  
+  <!-- Blue head silhouette in profile facing right -->
+  <path d="M30 30 C30 18, 38 10, 52 10 C66 10, 74 18, 74 30 C74 38, 82 46, 82 60 C82 68, 74 76, 60 82 C52 90, 44 90, 36 82 C30 82, 22 76, 22 60 C22 46, 30 38, 30 30 Z" fill="url(#headGradient)"/>
+  
+  <!-- Darker blue rounded rectangle inside head -->
+  <rect x="38" y="26" width="30" height="22" rx="5" fill="#1e40af"/>
+  
+  <!-- Black play triangle inside rectangle -->
+  <path d="M45 34 L45 42 L57 38 Z" fill="#000000"/>
 </svg>

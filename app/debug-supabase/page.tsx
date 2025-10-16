@@ -18,9 +18,9 @@ export default function DebugSupabasePage() {
           hasKey: !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
         },
         client: {
-          url: supabase.supabaseUrl,
-          keyLength: supabase.supabaseKey?.length,
-          keyPrefix: supabase.supabaseKey?.substring(0, 20) + '...',
+          url: process.env.NEXT_PUBLIC_SUPABASE_URL,
+          keyLength: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.length,
+          keyPrefix: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.substring(0, 20) + '...',
           isInitialized: !!supabase
         },
         network: {

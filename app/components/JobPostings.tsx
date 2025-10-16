@@ -37,7 +37,10 @@ import {
   Building
 } from 'lucide-react';
 import { Notification } from './Notification';
+import { loadTemplatesFromStorage } from '@/app/prompt-template/lib/templateStorage';
 import { PageSkeleton } from './SkeletonLoader';
+import { triggerJobPostingsRefresh } from '@/lib/realtime-utils';
+import { CompanySetupBanner } from './CompanySetupBanner';
 
 interface JobPostingsProps {
   user: any;
@@ -51,6 +54,7 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
   const [error, setError] = useState('');
   const [reloadKey, setReloadKey] = useState<number>(0);
   const [companyIdState, setCompanyIdState] = useState<string | null>(null);
+  const [brandingReady, setBrandingReady] = useState(false);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
@@ -59,6 +63,10 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
   const [viewingJob, setViewingJob] = useState<any>(null);
   const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
   const [formLoading, setFormLoading] = useState(false);
+  const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false);
+  const [agents, setAgents] = useState<Array<{ id: string; name: string }>>([]);
+  const [agentsLoading, setAgentsLoading] = useState(false);
+  const [agentNames, setAgentNames] = useState<{[key: string]: string}>({});
   const [searchTerm, setSearchTerm] = useState('');
   const [filterDepartment, setFilterDepartment] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
@@ -98,15 +106,44 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
 
   useEffect(() => {
     loadJobs();
+    loadAgents(); // Load agents on component mount to populate agent names
   }, [user?.id, reloadKey]);
+  // Listen for branding/company setup signals stored in localStorage
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const checkBranding = () => {
+      const hasName = !!window.localStorage.getItem('branding_company_name');
+      const hasLogo = !!window.localStorage.getItem('branding_logo_url');
+      setBrandingReady(hasName || hasLogo);
+    };
+    checkBranding();
+    window.addEventListener('branding:updated', checkBranding as any);
+    return () => window.removeEventListener('branding:updated', checkBranding as any);
+  }, []);
+
 
   // Respond to global refresh key changes
   useEffect(() => {
     if (globalRefreshKey && globalRefreshKey > 0) {
-      console.log('JobPostings: Global refresh triggered');
+      console.log('JobPostings: Global refresh triggered, key:', globalRefreshKey);
       setReloadKey(prev => prev + 1); // Use increment to ensure refresh
     }
   }, [globalRefreshKey]);
+
+  // Listen for global refresh events
+  useEffect(() => {
+    const handleGlobalRefresh = () => {
+      console.log('JobPostings: Received global refresh event');
+      setReloadKey(prev => prev + 1);
+    };
+
+    // Listen for custom refresh events
+    window.addEventListener('jobPostingsRefresh', handleGlobalRefresh);
+    
+    return () => {
+      window.removeEventListener('jobPostingsRefresh', handleGlobalRefresh);
+    };
+  }, []);
 
   // Open create dialog if requested via query param
   useEffect(() => {
@@ -121,58 +158,122 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
   useEffect(() => {
     (async () => {
       if (!user?.id) return;
-      const { data } = await supabase
-        .from('users')
-        .select('company_id')
-        .eq('id', user.id)
-        .maybeSingle();
-      if (data?.company_id) setCompanyIdState(data.company_id);
+      try {
+        const { data, error } = await supabase
+          .from('users')
+          .select('company_id')
+          .eq('id', user.id)
+          .maybeSingle();
+        
+        if (error) {
+          console.error('Error fetching user company_id for realtime:', error);
+          return;
+        }
+        
+        if (data?.company_id) {
+          console.log('Cached company_id for realtime:', data.company_id);
+          setCompanyIdState(data.company_id);
+        }
+      } catch (err) {
+        console.error('Error in company_id cache effect:', err);
+      }
     })();
   }, [user?.id]);
 
   // Realtime updates for job postings
   useEffect(() => {
-    if (!companyIdState) return;
-    const channel = supabase.channel(`job-postings-rt-${companyIdState}-${Date.now()}`);
+    if (!companyIdState) {
+      console.log('JobPostings: No company_id, skipping realtime setup');
+      return;
+    }
+
+    console.log('JobPostings: Setting up realtime for company:', companyIdState);
+    
+    const channelName = `job-postings-rt-${companyIdState}-${Date.now()}`;
+    const channel = supabase.channel(channelName);
     let timer: any;
+    
     const refresh = () => { 
       clearTimeout(timer); 
       timer = setTimeout(() => {
         console.log('JobPostings: Refreshing data due to real-time update');
-        setReloadKey(Date.now());
-      }, 300); 
+        setReloadKey(prev => prev + 1); // Use increment to ensure refresh
+      }, 500); // Increased debounce time for stability
     };
+
+    const handleRealtimeUpdate = (payload: any) => {
+      console.log('JobPostings: Received realtime update:', {
+        eventType: payload.eventType,
+        table: payload.table,
+        new: payload.new,
+        old: payload.old
+      });
+      refresh();
+    };
+
     try {
+      // Subscribe to job_postings changes
       channel.on('postgres_changes', { 
         event: '*', 
         schema: 'public', 
         table: 'job_postings', 
         filter: `company_id=eq.${companyIdState}` 
-      }, (payload) => {
-        console.log('JobPostings: job_postings changed:', payload.eventType);
-        refresh();
-      });
+      }, handleRealtimeUpdate);
+
+      // Also subscribe to users table changes (in case company_id changes)
+      channel.on('postgres_changes', { 
+        event: 'UPDATE', 
+        schema: 'public', 
+        table: 'users', 
+        filter: `id=eq.${user?.id}` 
+      }, handleRealtimeUpdate);
+
       channel.subscribe((status) => {
-        console.log('JobPostings realtime subscription status:', status);
+        console.log('JobPostings realtime subscription status:', status, 'for channel:', channelName);
+        
+        if (status === 'SUBSCRIBED') {
+          console.log('JobPostings: Successfully subscribed to realtime updates');
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error('JobPostings: Realtime subscription error');
+          // Retry subscription after a delay
+          setTimeout(() => {
+            console.log('JobPostings: Retrying realtime subscription...');
+            setReloadKey(prev => prev + 1);
+          }, 5000);
+        }
       });
     } catch (e) { 
-      console.error('JobPostings realtime error:', e); 
+      console.error('JobPostings realtime setup error:', e); 
     }
+
     return () => { 
       clearTimeout(timer);
       try { 
+        console.log('JobPostings: Cleaning up realtime channel:', channelName);
         supabase.removeChannel(channel);
-        console.log('JobPostings: Removed realtime channel');
       } catch (e) {
-        console.warn('JobPostings: Error removing channel:', e);
+        console.warn('JobPostings: Error removing realtime channel:', e);
       }
     };
-  }, [companyIdState]);
+  }, [companyIdState, user?.id]);
 
-  // Refresh when tab refocuses
+  // Refresh on focus/visibility only if tab was away for a while to avoid thrash
   useEffect(() => {
-    const onFocus = () => setReloadKey(Date.now());
-    const onVis = () => { if (document.visibilityState === 'visible') setReloadKey(Date.now()); };
+    let lastHiddenAt = 0;
+    const triggerIfStale = () => {
+      const awayMs = Date.now() - lastHiddenAt;
+      if (awayMs > 15000) { // only refresh if away > 15s
+        setReloadKey(Date.now());
+      }
+    };
+    const onFocus = () => triggerIfStale();
+    const onVis = () => {
+      if (document.visibilityState === 'hidden') {
+        lastHiddenAt = Date.now();
+      } else if (document.visibilityState === 'visible') {
+        triggerIfStale();
+      }
+    };
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onVis);
     return () => {
@@ -197,6 +298,7 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
 
   const loadJobs = async () => {
     if (!user?.id) {
+      console.log('No user ID available, skipping job loading');
       setLoading(false);
       return;
     }
@@ -205,28 +307,41 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
       setLoading(true);
       setError(''); // Clear any previous errors
 
-      // Get user's company_id first
+      console.log('Loading jobs for user:', user.id);
+
+      // Get user's company_id first with better error handling
       const { data: userData, error: userError } = await supabase
         .from('users')
         .select('company_id')
         .eq('id', user.id)
-        .single();
+        .maybeSingle(); // Use maybeSingle instead of single to handle no results gracefully
 
       if (userError) {
         console.error('Error fetching user data:', userError);
+        // If user profile doesn't exist, show empty state instead of error
+        if (userError.code === 'PGRST116') {
+          console.log('User profile not found in database, showing empty state');
+          setJobs([]);
+          setLoading(false);
+          return;
+        }
         setError('Unable to load user data');
         setLoading(false);
         return;
       }
 
       if (!userData?.company_id) {
-        console.log('No company_id found for user');
+        console.log('⚠️ No company_id found for user');
+        console.log('💡 Please go to Company Profile and save your company details first');
         setJobs([]);
         setLoading(false);
         return;
       }
 
-      // Fetch jobs for the company (without join to avoid foreign key issues)
+      console.log('Found company_id:', userData.company_id);
+      setCompanyIdState(userData.company_id);
+
+      // Fetch jobs for the company
       const { data: jobsData, error: jobsError } = await supabase
         .from('job_postings')
         .select('*')
@@ -238,15 +353,15 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
         
         // If table doesn't exist, show empty state without error message
         if (jobsError.code === '42P01') {
-          console.log('job_postings table does not exist yet');
+          console.log('job_postings table does not exist yet, showing empty state');
           setJobs([]);
-          // Don't show error message, just show empty state
-      } else {
+        } else {
           // For other errors, just log them but don't show to user
           console.log('Failed to load jobs, showing empty state');
           setJobs([]);
         }
       } else {
+        console.log('Successfully loaded jobs:', jobsData?.length || 0);
         setJobs(jobsData || []);
       }
     } catch (err) {
@@ -258,6 +373,73 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
     }
   };
 
+  const loadAgents = async () => {
+    if (!user?.id) return;
+    try {
+      setAgentsLoading(true);
+      // Start with local agents from AI Agent module storage
+      try {
+        const local = loadTemplatesFromStorage();
+        if (Array.isArray(local) && local.length > 0) {
+          const mapped = local.map((t: any) => ({ id: String(t.templateId), name: t.name as string }));
+          setAgents(prev => {
+            // Prefer DB values later; ensure no dup ids
+            const existingIds = new Set(prev.map(a => a.id));
+            const merged = [...prev, ...mapped.filter(m => !existingIds.has(m.id))];
+            return merged;
+          });
+          // Also update agent names mapping
+          setAgentNames(prev => {
+            const newMapping = {...prev};
+            mapped.forEach(agent => {
+              newMapping[agent.id] = agent.name;
+            });
+            return newMapping;
+          });
+        }
+      } catch {}
+      // Get user's company_id
+      const { data: userData, error: userError } = await supabase
+        .from('users')
+        .select('company_id')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      if (userError || !userData?.company_id) {
+        // Keep whatever local agents we already loaded
+        return;
+      }
+
+      // Fetch agents from prompt_templates
+      const { data: tmpl, error } = await supabase
+        .from('prompt_templates')
+        .select('id, name')
+        .eq('company_id', userData.company_id)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        // On DB error, keep local list
+        return;
+      }
+      const dbAgents = (tmpl || []).map(t => ({ id: String(t.id), name: t.name as string }));
+      setAgents(prev => {
+        const existingIds = new Set(prev.map(a => a.id));
+        const merged = [...prev, ...dbAgents.filter(m => !existingIds.has(m.id))];
+        return merged;
+      });
+      // Also update agent names mapping
+      setAgentNames(prev => {
+        const newMapping = {...prev};
+        dbAgents.forEach(agent => {
+          newMapping[agent.id] = agent.name;
+        });
+        return newMapping;
+      });
+    } finally {
+      setAgentsLoading(false);
+    }
+  };
+
   const handleCreateJob = async (isDraft = false) => {
     if (!user?.id) return;
 
@@ -265,16 +447,39 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
       setFormLoading(true);
       setError('');
 
-      // Get user's company_id
+      // Resolve company_id with robust fallbacks
       const { data: userData, error: userError } = await supabase
         .from('users')
         .select('company_id')
         .eq('id', user.id)
-        .single();
+        .maybeSingle();
 
-      if (userError || !userData?.company_id) {
-        setError('Unable to create job: User not linked to company');
-        return;
+      if (userError) {
+        console.error('Error fetching user data for job creation:', userError);
+      }
+
+      const fallbackLocalCompanyId = (typeof window !== 'undefined') ? window.localStorage.getItem('branding_company_id') : null;
+      let resolvedCompanyId = userData?.company_id || companyIdState || (user as any)?.user_metadata?.company_id || fallbackLocalCompanyId || null;
+
+      // If company_id still missing, create a lightweight company automatically
+      if (!resolvedCompanyId) {
+        try {
+          const inferredName = (user as any)?.user_metadata?.company_name || (user.email?.split('@')[0] || 'My Company');
+          const { data: createdCompany, error: companyErr } = await supabase
+            .from('companies')
+            .insert([{ name: inferredName }])
+            .select('id')
+            .single();
+          if (!companyErr && createdCompany?.id) {
+            resolvedCompanyId = createdCompany.id as string;
+            setCompanyIdState(resolvedCompanyId);
+            if (typeof window !== 'undefined') {
+              try { window.localStorage.setItem('branding_company_id', resolvedCompanyId); } catch {}
+            }
+          }
+        } catch (e) {
+          console.warn('Auto-create company failed; proceeding without but RPC may fail due to NOT NULL.', e);
+        }
       }
 
       // Validate required fields
@@ -284,9 +489,30 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
       }
 
       // Create job using RPC function
+      console.log('Creating job with data:', {
+        p_company_id: resolvedCompanyId,
+        p_created_by: user.id,
+        p_job_title: formData.job_title.trim(),
+        p_department: formData.department.trim(),
+        p_job_description: formData.job_description.trim(),
+        p_ai_interview_template: formData.ai_interview_template.trim(),
+        p_interview_mode: formData.interview_mode,
+        p_interview_language: formData.interview_language,
+        p_employment_type: formData.employment_type,
+        p_experience_level: formData.experience_level,
+        p_location: formData.location.trim() || null,
+        p_salary_min: formData.salary_min ? parseInt(formData.salary_min) : null,
+        p_salary_max: formData.salary_max ? parseInt(formData.salary_max) : null,
+        p_currency: formData.currency,
+        p_is_remote: formData.is_remote,
+        p_interview_duration: parseInt(formData.interview_duration) || 30,
+        p_questions_count: parseInt(formData.questions_count) || 5,
+        p_difficulty_level: formData.difficulty_level
+      });
+
       const { data: jobId, error: createError } = await supabase
         .rpc('create_job_posting', {
-          p_company_id: userData.company_id,
+          p_company_id: resolvedCompanyId,
           p_created_by: user.id,
           p_job_title: formData.job_title.trim(),
           p_department: formData.department.trim(),
@@ -306,9 +532,17 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
           p_difficulty_level: formData.difficulty_level
         });
 
+      console.log('RPC Response:', { jobId, createError });
+
       if (createError) {
         console.error('Error creating job:', createError);
-        setError('Failed to create job posting');
+        setError(`Failed to create job posting: ${createError.message || 'Unknown error'}`);
+        return;
+      }
+
+      if (!jobId) {
+        console.error('No job ID returned from RPC');
+        setError('Failed to create job posting: No ID returned');
         return;
       }
 
@@ -338,6 +572,9 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
       resetForm();
       setIsCreateDialogOpen(false);
       await loadJobs();
+      
+      // Trigger global refresh for other components
+      triggerJobPostingsRefresh();
       
     } catch (err) {
       console.error('Error creating job:', err);
@@ -372,6 +609,9 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
         setIsEditDialogOpen(false);
         setEditingJob(null);
         await loadJobs();
+        
+        // Trigger global refresh for other components
+        triggerJobPostingsRefresh();
       }
     } catch (err) {
       console.error('Error updating job:', err);
@@ -412,6 +652,9 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
         await loadJobs();
         setIsDeleteDialogOpen(false);
         setDeletingJobId(null);
+        
+        // Trigger global refresh for other components
+        triggerJobPostingsRefresh();
       }
     } catch (err) {
       console.error('Error deleting job:', err);
@@ -442,6 +685,8 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
       questions_count: '5',
       difficulty_level: 'medium'
     });
+    setIsAssignDialogOpen(false);
+    setAgents([]);
   };
 
   const openViewDialog = (job: any) => {
@@ -471,6 +716,13 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
     });
     setIsEditDialogOpen(true);
   };
+
+  // Persist discovered company_id for later use
+  useEffect(() => {
+    if (companyIdState && typeof window !== 'undefined') {
+      try { window.localStorage.setItem('branding_company_id', companyIdState); } catch {}
+    }
+  }, [companyIdState]);
 
   // Filter jobs based on search and filters
   const filteredJobs = jobs.filter(job => {
@@ -570,15 +822,21 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
+      {/* Company Setup Banner */}
+      {!companyIdState && !brandingReady && !loading && <CompanySetupBanner />}
+      
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-3xl font-bold mb-2">Job Postings</h1>
+          <div className="flex items-center gap-3 mb-2">
+            <div className="bg-[#e30d0d] text-white px-3 py-1 rounded-md font-semibold">JOB</div>
+            <h1 className="text-3xl font-bold"> Postings</h1>
+          </div>
           <p className="text-muted-foreground">Create and manage job openings with AI interview templates.</p>
         </div>
         <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
           <DialogTrigger asChild>
-            <Button size="lg" className="gap-2" onClick={() => { resetForm(); setIsCreateDialogOpen(true); }}>
+            <Button size="lg" className="gap-2 bg-[#e30d0d] hover:bg-[#c50c0c] text-white" onClick={() => { resetForm(); setIsCreateDialogOpen(true); }}>
               <Plus className="h-4 w-4" />
               Create New Job
             </Button>
@@ -730,49 +988,7 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
                 </div>
               </div>
 
-              {/* AI Interview Template */}
-              <div>
-                <Label className="text-base">AI Interview Template *</Label>
-                <div className="grid grid-cols-1 gap-3 mt-2">
-                  {templates.map((template) => (
-                    <div key={template.id} className="flex items-start space-x-3 p-3 border rounded-lg cursor-pointer hover:bg-muted/50">
-                      <input 
-                        type="radio" 
-                        name="template" 
-                        value={template.template}
-                        checked={formData.ai_interview_template === template.template}
-                        onChange={(e) => setFormData({...formData, ai_interview_template: e.target.value})}
-                        className="w-4 h-4 mt-1" 
-                      />
-                      <div className="flex-1">
-                        <p className="font-medium">{template.name}</p>
-                        <p className="text-sm text-muted-foreground">{template.template}</p>
-                      </div>
-                    </div>
-                  ))}
-                  <div className="flex items-start space-x-3 p-3 border rounded-lg">
-                    <input 
-                      type="radio" 
-                      name="template" 
-                      value="custom"
-                      checked={!templates.some(t => t.template === formData.ai_interview_template) && formData.ai_interview_template !== ''}
-                      onChange={() => setFormData({...formData, ai_interview_template: 'custom'})}
-                      className="w-4 h-4 mt-1" 
-                    />
-                    <div className="flex-1">
-                      <p className="font-medium">Custom Template</p>
-                      <Textarea 
-                        placeholder="Write your custom AI interview template..."
-                        className="mt-2"
-                        rows={3}
-                        value={formData.ai_interview_template === 'custom' ? '' : (templates.some(t => t.template === formData.ai_interview_template) ? '' : formData.ai_interview_template)}
-                        onChange={(e) => setFormData({...formData, ai_interview_template: e.target.value})}
-                        disabled={templates.some(t => t.template === formData.ai_interview_template)}
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
+              {/* Assign Agent moved to separate dialog */}
 
               {/* Interview Configuration */}
               <div className="grid grid-cols-2 gap-4">
@@ -822,31 +1038,6 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-4">
-                <div>
-                  <Label htmlFor="duration">Duration (minutes)</Label>
-                  <Input 
-                    id="duration" 
-                    type="number"
-                    min="10"
-                    max="120"
-                    className="mt-1"
-                    value={formData.interview_duration}
-                    onChange={(e) => setFormData({...formData, interview_duration: e.target.value})}
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="questions">Questions Count</Label>
-                  <Input 
-                    id="questions" 
-                    type="number"
-                    min="3"
-                    max="15"
-                    className="mt-1"
-                    value={formData.questions_count}
-                    onChange={(e) => setFormData({...formData, questions_count: e.target.value})}
-                  />
-                </div>
                 <div>
                   <Label>Difficulty Level</Label>
                   <Select value={formData.difficulty_level} onValueChange={(value) => setFormData({...formData, difficulty_level: value})}>
@@ -859,17 +1050,16 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
                       <SelectItem value="hard">Hard</SelectItem>
                     </SelectContent>
                   </Select>
-                </div>
               </div>
 
               <div className="flex gap-3 pt-4">
                 <Button 
-                  onClick={() => handleCreateJob(false)} 
+                  onClick={async () => { setIsAssignDialogOpen(true); await loadAgents(); }} 
                   disabled={formLoading}
-                  className="gap-2"
+                  className="gap-2 bg-[#e30d0d] hover:bg-[#c50c0c] text-white"
                 >
                   {formLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
-                  Create & Publish
+                  Assign Agent
                 </Button>
                 <Button 
                   variant="outline" 
@@ -884,6 +1074,57 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
                   variant="ghost" 
                   onClick={() => setIsCreateDialogOpen(false)}
                   disabled={formLoading}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+    
+    {/* Assign Agent Dialog */}
+    <Dialog open={isAssignDialogOpen} onOpenChange={setIsAssignDialogOpen}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Assign AI Agent</DialogTitle>
+          <DialogDescription>Select an agent to proceed with publishing</DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 pt-2">
+          <div>
+            <Label className="text-base">AI Agent *</Label>
+            <div className="mt-2">
+              <Select
+                value={formData.ai_interview_template}
+                onValueChange={(value) => setFormData({ ...formData, ai_interview_template: value })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder={agentsLoading ? 'Loading agents...' : 'Select an AI Agent'} />
+                </SelectTrigger>
+                <SelectContent>
+                  {agents.map(a => (
+                    <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {(!agentsLoading && agents.length === 0) && (
+                <p className="text-sm text-muted-foreground mt-2">No agents found. Create one in the AI Agent module.</p>
+              )}
+            </div>
+          </div>
+
+          <div className="flex gap-3 pt-2">
+            <Button 
+              onClick={() => handleCreateJob(false)} 
+              disabled={formLoading || !formData.ai_interview_template}
+              className="gap-2 bg-[#e30d0d] hover:bg-[#c50c0c] text-white"
+            >
+              {formLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
+              Create & Publish
+            </Button>
+            <Button 
+              variant="outline" 
+              onClick={() => setIsAssignDialogOpen(false)}
                 >
                   Cancel
                 </Button>
@@ -955,7 +1196,7 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
                   {jobs.length === 0 ? 'Create your first job posting to start hiring.' : 'Try adjusting your search or filters.'}
                 </p>
                 {jobs.length === 0 && (
-                  <Button onClick={() => setIsCreateDialogOpen(true)} className="gap-2">
+                  <Button onClick={() => setIsCreateDialogOpen(true)} className="gap-2 bg-[#e30d0d] hover:bg-[#c50c0c] text-white">
                     <Plus className="h-4 w-4" />
                     Create Your First Job
                   </Button>
@@ -1022,6 +1263,20 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
                         <span>{job.applications_count} applications</span>
                       </div>
                     </div>
+
+                    {/* Agent Assignment */}
+                    {job.ai_interview_template && (
+                      <div className="flex items-center gap-2 text-sm">
+                        <div className="bg-blue-100 text-blue-800 px-2 py-1 rounded-md text-xs font-medium">
+                          AI Agent: {agentNames[job.ai_interview_template] || 'Unknown Agent'}
+                        </div>
+                        <div className="flex items-center gap-1 text-muted-foreground">
+                          <span className="capitalize">{job.interview_mode}</span>
+                          <span>•</span>
+                          <span className="capitalize">{job.difficulty_level}</span>
+                        </div>
+                      </div>
+                    )}
                     
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
@@ -1153,8 +1408,9 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
             </div>
           )}
 
-          {/* Same form as create dialog but for editing */}
+          {/* Full form for editing - same as create dialog */}
           <div className="space-y-6 pt-4">
+            {/* Basic Information */}
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="edit-job-title">Job Title *</Label>
@@ -1185,13 +1441,168 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
             </div>
 
             <div>
-              <Label>Job Description *</Label>
+              <Label htmlFor="edit-job-description">Job Description *</Label>
               <Textarea 
+                id="edit-job-description" 
+                placeholder="Describe the role, responsibilities, and requirements..."
                 className="mt-1"
                 rows={4}
                 value={formData.job_description}
                 onChange={(e) => setFormData({...formData, job_description: e.target.value})}
               />
+            </div>
+
+            {/* Employment Details */}
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <Label>Employment Type</Label>
+                <Select value={formData.employment_type} onValueChange={(value) => setFormData({...formData, employment_type: value})}>
+                  <SelectTrigger className="mt-1">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="full-time">Full Time</SelectItem>
+                    <SelectItem value="part-time">Part Time</SelectItem>
+                    <SelectItem value="contract">Contract</SelectItem>
+                    <SelectItem value="internship">Internship</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Experience Level</Label>
+                <Select value={formData.experience_level} onValueChange={(value) => setFormData({...formData, experience_level: value})}>
+                  <SelectTrigger className="mt-1">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="entry-level">Entry Level</SelectItem>
+                    <SelectItem value="mid-level">Mid Level</SelectItem>
+                    <SelectItem value="senior-level">Senior Level</SelectItem>
+                    <SelectItem value="executive">Executive</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label htmlFor="edit-location">Location</Label>
+                <Input 
+                  id="edit-location" 
+                  placeholder="e.g. New York, NY"
+                  className="mt-1"
+                  value={formData.location}
+                  onChange={(e) => setFormData({...formData, location: e.target.value})}
+                />
+              </div>
+            </div>
+
+            {/* Salary */}
+            <div className="grid grid-cols-4 gap-4">
+              <div>
+                <Label htmlFor="edit-salary-min">Min Salary</Label>
+                <Input 
+                  id="edit-salary-min" 
+                  type="number"
+                  placeholder="50000"
+                  className="mt-1"
+                  value={formData.salary_min}
+                  onChange={(e) => setFormData({...formData, salary_min: e.target.value})}
+                />
+              </div>
+              <div>
+                <Label htmlFor="edit-salary-max">Max Salary</Label>
+                <Input 
+                  id="edit-salary-max" 
+                  type="number"
+                  placeholder="80000"
+                  className="mt-1"
+                  value={formData.salary_max}
+                  onChange={(e) => setFormData({...formData, salary_max: e.target.value})}
+                />
+              </div>
+              <div>
+                <Label>Currency</Label>
+                <Select value={formData.currency} onValueChange={(value) => setFormData({...formData, currency: value})}>
+                  <SelectTrigger className="mt-1">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="USD">USD</SelectItem>
+                    <SelectItem value="EUR">EUR</SelectItem>
+                    <SelectItem value="GBP">GBP</SelectItem>
+                    <SelectItem value="INR">INR</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center space-x-2 pt-6">
+                <input 
+                  type="checkbox" 
+                  id="edit-is-remote"
+                  checked={formData.is_remote}
+                  onChange={(e) => setFormData({...formData, is_remote: e.target.checked})}
+                />
+                <Label htmlFor="edit-is-remote">Remote Work</Label>
+              </div>
+            </div>
+
+            {/* Interview Configuration */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Interview Mode</Label>
+                <Select value={formData.interview_mode} onValueChange={(value) => setFormData({...formData, interview_mode: value})}>
+                  <SelectTrigger className="mt-1">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="video">
+                      <div className="flex items-center gap-2">
+                        <Video className="h-4 w-4" />
+                        Video Interview
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="audio">
+                      <div className="flex items-center gap-2">
+                        <Mic className="h-4 w-4" />
+                        Audio Only
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="text">
+                      <div className="flex items-center gap-2">
+                        <MessageSquare className="h-4 w-4" />
+                        Text Based
+                      </div>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Language</Label>
+                <Select value={formData.interview_language} onValueChange={(value) => setFormData({...formData, interview_language: value})}>
+                  <SelectTrigger className="mt-1">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="en">English</SelectItem>
+                    <SelectItem value="es">Spanish</SelectItem>
+                    <SelectItem value="fr">French</SelectItem>
+                    <SelectItem value="de">German</SelectItem>
+                    <SelectItem value="hi">Hindi</SelectItem>
+                    <SelectItem value="zh">Chinese</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div>
+              <Label>Difficulty Level</Label>
+              <Select value={formData.difficulty_level} onValueChange={(value) => setFormData({...formData, difficulty_level: value})}>
+                <SelectTrigger className="mt-1">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="easy">Easy</SelectItem>
+                  <SelectItem value="medium">Medium</SelectItem>
+                  <SelectItem value="hard">Hard</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="flex gap-3 pt-4">
@@ -1215,7 +1626,7 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
                   p_difficulty_level: formData.difficulty_level
                 })}
                 disabled={formLoading}
-                className="gap-2"
+                className="gap-2 bg-[#e30d0d] hover:bg-[#c50c0c] text-white"
               >
                 {formLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
                 Update Job

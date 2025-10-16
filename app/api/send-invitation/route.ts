@@ -69,12 +69,12 @@ export async function POST(request: Request) {
       <body>
         <div class="container">
           <div class="header">
-            <h1>InterviewAI Team Invitation</h1>
+            <h1>Jobly.Ai Team Invitation</h1>
           </div>
           <div class="content">
             <h2>You're Invited to Join ${companyName}!</h2>
             <p>Hi there!</p>
-            <p><strong>${inviterName}</strong> has invited you to join <strong>${companyName}</strong> on the InterviewAI platform.</p>
+            <p><strong>${inviterName}</strong> has invited you to join <strong>${companyName}</strong> on the Jobly.Ai platform.</p>
             <p><strong>Your Role:</strong> ${roleFormatted}</p>
             <p>Click the button below to accept the invitation and create your account:</p>
             <a href="${invitationLink}" class="button">Accept Invitation</a>
@@ -83,7 +83,7 @@ export async function POST(request: Request) {
             <p><strong>Note:</strong> This invitation will expire in 7 days.</p>
           </div>
           <div class="footer">
-            <p>Best regards,<br>InterviewAI Team</p>
+            <p>Best regards,<br>Jobly.Ai Team</p>
           </div>
         </div>
       </body>
@@ -96,7 +96,7 @@ export async function POST(request: Request) {
       
       Hi there!
       
-      ${inviterName} has invited you to join ${companyName} on the InterviewAI platform.
+      ${inviterName} has invited you to join ${companyName} on the Jobly.Ai platform.
       
       Your Role: ${roleFormatted}
       
@@ -106,14 +106,14 @@ export async function POST(request: Request) {
       This invitation will expire in 7 days.
       
       Best regards,
-      InterviewAI Team
+      Jobly.Ai Team
     `;
 
     // Send email
     const mailOptions = {
-      from: process.env.SMTP_FROM || process.env.GMAIL_USER || 'noreply@interviewai.com',
+      from: process.env.SMTP_FROM || process.env.GMAIL_USER || 'noreply@jobly.ai',
       to: email,
-      subject: `Invitation to join ${companyName} on InterviewAI`,
+      subject: `Invitation to join ${companyName} on Jobly.Ai`,
       text: textContent,
       html: htmlContent,
     };

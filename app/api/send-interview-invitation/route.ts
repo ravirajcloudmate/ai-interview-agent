@@ -3,9 +3,15 @@ import nodemailer from 'nodemailer'
 
 export async function POST(request: Request) {
   try {
-    const { email, candidateName, interviewLink, jobTitle, companyName } = await request.json()
+    console.log('Email API called');
+    
+    const body = await request.json()
+    console.log('Request body:', body);
+    
+    const { email, candidateName, interviewLink, jobTitle, companyName } = body
     
     if (!email || !interviewLink || !jobTitle) {
+      console.error('Missing required fields:', { email: !!email, interviewLink: !!interviewLink, jobTitle: !!jobTitle });
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
     }
 
@@ -131,6 +137,12 @@ export async function POST(request: Request) {
       html: htmlContent,
     }
 
+    console.log('Attempting to send email with options:', {
+      from: mailOptions.from,
+      to: mailOptions.to,
+      subject: mailOptions.subject
+    });
+
     const info = await transporter.sendMail(mailOptions)
     console.log('Interview invitation email sent successfully:', info.messageId)
 
@@ -154,6 +166,16 @@ export async function POST(request: Request) {
 
   } catch (error) {
     console.error('Error sending interview invitation email:', error)
-    return NextResponse.json({ error: 'Failed to send email' }, { status: 500 })
+    console.error('Error details:', {
+      message: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined,
+      name: error instanceof Error ? error.name : undefined
+    });
+    
+    return NextResponse.json({ 
+      error: 'Failed to send email',
+      details: error instanceof Error ? error.message : 'Unknown error',
+      timestamp: new Date().toISOString()
+    }, { status: 500 })
   }
 }

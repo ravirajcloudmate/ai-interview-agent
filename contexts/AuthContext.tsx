@@ -29,7 +29,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const loadingTimeout = setTimeout(() => {
       console.warn('⚠️ Authentication loading timeout, setting loading to false')
       setLoading(false)
-    }, 10000) // 10 second timeout
+    }, 3000) // 3 second timeout
 
     // Get initial session
     const getInitialSession = async () => {
@@ -87,28 +87,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setSession(session)
             setLoading(false)
             
-            // Ensure user profile exists and then redirect
+            // Only redirect if we're on the login/signup/callback pages
+            const currentPath = typeof window !== 'undefined' ? window.location.pathname : ''
+            const shouldRedirect = currentPath.includes('/auth/') || currentPath === '/'
+            
+            // Ensure user profile exists
             try {
               console.log('🔄 Starting ensureUserProfile for:', session?.user?.email)
               await ensureUserProfile(session?.user)
               console.log('✅ User profile ensured successfully')
               
-              // Wait a bit more to ensure profile is created
-              setTimeout(() => {
-                console.log('🚀 Redirecting to dashboard after profile creation')
-                if (typeof window !== 'undefined') {
-                  window.location.href = '/'
-                }
-              }, 1000)
+              // Only redirect if on auth pages
+              if (shouldRedirect) {
+                setTimeout(() => {
+                  console.log('🚀 Redirecting to dashboard after profile creation')
+                  if (typeof window !== 'undefined') {
+                    window.location.href = '/dashboard'
+                  }
+                }, 1000)
+              } else {
+                console.log('✅ User already on app page, staying put')
+              }
             } catch (error) {
               console.error('❌ Error ensuring user profile:', error)
-              // Still redirect even if profile creation fails
-              setTimeout(() => {
-                console.log('🚀 Redirecting to dashboard despite profile creation error')
-                if (typeof window !== 'undefined') {
-                  window.location.href = '/'
-                }
-              }, 1000)
+              // Only redirect if on auth pages
+              if (shouldRedirect) {
+                setTimeout(() => {
+                  console.log('🚀 Redirecting to dashboard despite profile creation error')
+                  if (typeof window !== 'undefined') {
+                    window.location.href = '/dashboard'
+                  }
+                }, 1000)
+              }
             }
           } else if (event === 'SIGNED_OUT') {
             console.log('🔐 User signed out, clearing state and redirecting')
@@ -158,7 +168,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.log('🔍 Checking if user profile exists...')
       const { data: existingProfile, error: fetchError } = await supabase
         .from('users')
-        .select('id, email, full_name, company_id, role')
+        .select('id, email, full_name, company_id, role, avatar_url')
         .eq('id', user.id)
         .single()
 

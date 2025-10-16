@@ -1,13 +1,16 @@
 'use client'
 
-import { ReactNode, useEffect, useState } from 'react'
+import React, { Component, ReactNode, useEffect, useState } from 'react'
 import { AuthProvider } from '@/contexts/AuthContext'
 import { usePathname } from 'next/navigation'
 
-class ErrorBoundary extends (require('react').Component as any) {
-  state: { hasError: boolean } = { hasError: false }
+class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
+  constructor(props: { children: ReactNode }) {
+    super(props)
+    this.state = { hasError: false }
+  }
   static getDerivedStateFromError() { return { hasError: true } }
-  componentDidCatch(error: any, info: any) { console.error('Global error boundary caught:', error, info) }
+  componentDidCatch(error: unknown, info: unknown) { console.error('Global error boundary caught:', error, info) }
   render() {
     if (this.state.hasError) {
       return (
@@ -16,7 +19,7 @@ class ErrorBoundary extends (require('react').Component as any) {
             <h2 className="text-lg font-semibold text-red-700 mb-2">Something went wrong</h2>
             <p className="text-sm text-red-800 mb-4">An unexpected error occurred. You can try reloading the module.</p>
             <button
-              onClick={() => { this.setState({ hasError: false }); typeof window !== 'undefined' && window.location && window.location.reload() }}
+              onClick={() => { this.setState({ hasError: false }); if (typeof window !== 'undefined' && window.location) { window.location.reload() } }}
               className="px-3 py-2 text-sm rounded-md bg-red-600 text-white hover:bg-red-700"
             >Reload</button>
           </div>

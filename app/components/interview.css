@@ -1,0 +1,206 @@
+/* interview.css */
+.interview-container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 20px;
+  font-family: Arial, sans-serif;
+}
+
+.loading-container {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  min-height: 400px;
+  font-size: 18px;
+  color: #666;
+  gap: 20px;
+}
+
+.error-container {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  min-height: 400px;
+  padding: 20px;
+}
+
+.error-container h2 {
+  color: #dc3545;
+  margin-bottom: 10px;
+}
+
+.error-container button {
+  margin-top: 20px;
+  padding: 10px 20px;
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.error-container button:hover {
+  background-color: #0056b3;
+}
+
+.spinner, .loading-spinner {
+  width: 50px;
+  height: 50px;
+  border: 5px solid #f3f3f3;
+  border-top: 5px solid #3498db;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.agent-status {
+  padding: 20px;
+  border-radius: 8px;
+  margin: 20px 0;
+  text-align: center;
+  font-weight: 500;
+}
+
+.agent-status.agent-waiting {
+  background: #fff3cd;
+  border: 2px solid #ffc107;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.agent-status.agent-connected {
+  background: #d4edda;
+  border: 2px solid #28a745;
+}
+
+.status-detail {
+  font-size: 14px;
+  color: #666;
+  font-weight: normal;
+}
+
+.waiting-message {
+  background: #e7f3ff;
+  padding: 30px;
+  border-radius: 8px;
+  margin: 20px 0;
+  text-align: center;
+}
+
+.waiting-message p {
+  margin: 10px 0;
+  font-size: 16px;
+  color: #555;
+}
+
+.device-status {
+  margin-top: 20px;
+  padding: 15px;
+  background: #f8f9fa;
+  border-radius: 5px;
+  text-align: left;
+}
+
+.device-status h4 {
+  margin: 0 0 10px 0;
+  color: #333;
+  font-size: 16px;
+}
+
+.device-item {
+  padding: 8px;
+  margin: 5px 0;
+  background: white;
+  border-left: 3px solid #28a745;
+  border-radius: 3px;
+  font-size: 14px;
+}
+
+.no-devices {
+  color: #dc3545;
+  font-weight: 500;
+  padding: 10px;
+}
+
+.device-info {
+  margin-top: 15px;
+  padding: 10px;
+  background: #d4edda;
+  border-radius: 5px;
+  color: #155724;
+}
+
+.permission-guide {
+  margin: 20px 0;
+  padding: 15px;
+  background: #fff3cd;
+  border-left: 4px solid #ffc107;
+  border-radius: 5px;
+  text-align: left;
+}
+
+.permission-guide strong {
+  color: #856404;
+}
+
+.permission-guide ol {
+  margin: 10px 0 0 20px;
+  color: #856404;
+}
+
+.permission-guide li {
+  margin: 5px 0;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 20px;
+  background-color: #e0e0e0;
+  border-radius: 10px;
+  overflow: hidden;
+  margin: 20px 0;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4CAF50, #45a049);
+  transition: width 0.5s ease;
+}
+
+.question-box {
+  background: #f5f5f5;
+  padding: 20px;
+  border-radius: 8px;
+  margin: 20px 0;
+  border-left: 4px solid #2196F3;
+}
+
+.question-box h3 {
+  margin-top: 0;
+  color: #333;
+}
+
+.status {
+  background: #fff3cd;
+  padding: 15px;
+  border-radius: 5px;
+  margin: 15px 0;
+}
+
+.instructions {
+  background: #d1ecf1;
+  padding: 15px;
+  border-radius: 5px;
+  margin: 15px 0;
+  text-align: center;
+}
+

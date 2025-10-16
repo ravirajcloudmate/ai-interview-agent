@@ -158,11 +158,23 @@ export default function SignupPage() {
         <div className="max-w-lg">
           {/* Logo & Brand */}
           <div className="flex items-center gap-3 mb-8">
-            <div className="w-12 h-12 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl flex items-center justify-center">
-              <Sparkles className="h-6 w-6 text-white" />
+            <div className="w-12 h-12 bg-black rounded-xl flex items-center justify-center">
+              <svg className="h-8 w-8" viewBox="0 0 24 24" fill="none">
+                <defs>
+                  <linearGradient id="signupHeadGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stopColor="#1e40af" stopOpacity="1" />
+                    <stop offset="50%" stopColor="#3b82f6" stopOpacity="1" />
+                    <stop offset="100%" stopColor="#60a5fa" stopOpacity="1" />
+                  </linearGradient>
+                </defs>
+                <rect width="24" height="24" fill="#000000"/>
+                <path d="M6 6 C6 4, 8 2, 12 2 C16 2, 18 4, 18 6 C18 8, 20 10, 20 14 C20 16, 18 18, 14 20 C12 22, 10 22, 8 20 C6 20, 4 18, 4 14 C4 10, 6 8, 6 6 Z" fill="url(#signupHeadGradient)"/>
+                <rect x="7.5" y="5.5" width="6" height="4.5" rx="1" fill="#1e40af"/>
+                <path d="M9 7 L9 10 L12 8.5 Z" fill="#000000"/>
+              </svg>
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">InterviewAI</h1>
+              <h1 className="text-2xl font-bold text-gray-900">Jobly.Ai</h1>
               <p className="text-sm text-gray-600">Smart Hiring Platform</p>
             </div>
           </div>
@@ -217,7 +229,7 @@ export default function SignupPage() {
             <div className="text-center">
           <CardTitle className="text-2xl font-bold">Create Account</CardTitle>
               <CardDescription className="text-base mt-2">
-                Start your journey with InterviewAI
+                Start your journey with Jobly.Ai
           </CardDescription>
             </div>
         </CardHeader>

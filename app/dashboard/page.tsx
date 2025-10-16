@@ -1,23 +1,13 @@
 'use client'
 
-import { useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense } from 'react'
+import { ModuleContent } from '../[module]/page'
 
 export default function DashboardPage() {
-	const router = useRouter()
-
-	useEffect(() => {
-		// Redirect to main page which contains the dashboard
-		router.replace('/')
-	}, [router])
-
 	return (
-		<div className="min-h-screen flex items-center justify-center bg-background">
-			<div className="text-center">
-				<div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
-				<p className="text-muted-foreground">Redirecting to dashboard...</p>
-			</div>
-		</div>
+		<Suspense fallback={<div>Loading...</div>}>
+			<ModuleContent module="dashboard" />
+		</Suspense>
 	)
 }
 

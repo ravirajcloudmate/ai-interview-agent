@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { RoomServiceClient } from 'livekit-server-sdk';
 
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001';
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -8,7 +10,9 @@ export async function GET(req: NextRequest) {
     const candidateId = searchParams.get('candidateId');
 
     if (!roomName && !candidateId) {
-      return NextResponse.json({ error: 'room or candidateId parameter is required' }, { status: 400 });
+      return NextResponse.json({ 
+        error: 'room or candidateId parameter is required' 
+      }, { status: 400 });
     }
 
     const serverUrl = process.env.LIVEKIT_URL;
@@ -21,110 +25,118 @@ export async function GET(req: NextRequest) {
       }, { status: 500 });
     }
 
-    // Try to get status from Python backend first
+    // Get status from Python backend first (primary source)
     if (candidateId) {
       try {
-        const backendResponse = await fetch(`http://localhost:8000/interview-status/${candidateId}`);
+        const backendResponse = await fetch(
+          `${BACKEND_URL}/interview-status/${candidateId}`,
+          { cache: 'no-store' }
+        );
+        
         if (backendResponse.ok) {
           const backendData = await backendResponse.json();
           console.log('✅ Backend status:', backendData);
           
-          return NextResponse.json({
-            status: 'success',
-            roomName: roomName || `interview-${candidateId}`,
-            agentConnected: backendData.agentConnected || false,
-            candidateConnected: true,
-            participantCount: backendData.agentConnected ? 2 : 1,
-            currentQuestion: backendData.currentQuestion || null,
-            interviewProgress: backendData.interviewProgress || 0,
-            aiAnalysis: backendData.aiAnalysis || null,
-            isListening: backendData.isListening || false,
-            isAgentSpeaking: backendData.isAgentSpeaking || false,
-            participants: [
-              {
-                identity: `candidate-${candidateId}`,
-                name: 'Candidate',
-                isAgent: false,
-                isCandidate: true,
-                joinedAt: new Date().toISOString()
-              },
-              ...(backendData.agentConnected ? [{
-                identity: 'interview-agent',
-                name: 'AI Interviewer',
-                isAgent: true,
-                isCandidate: false,
-                joinedAt: new Date().toISOString()
-              }] : [])
-            ]
-          });
+          if (backendData.status === 'active') {
+            // Get LiveKit room details
+            const roomService = new RoomServiceClient(serverUrl, apiKey, apiSecret);
+            const effectiveRoomName = backendData.roomName || roomName || `interview-${candidateId}`;
+            
+            try {
+              const participants = await roomService.listParticipants(effectiveRoomName);
+              
+              const agentConnected = participants.some(p => 
+                p.identity?.includes('agent')
+              );
+              
+              const candidateConnected = participants.some(p => 
+                p.identity?.includes('candidate')
+              );
+
+              return NextResponse.json({
+                status: 'success',
+                roomName: effectiveRoomName,
+                agentConnected,
+                candidateConnected,
+                participantCount: participants.length,
+                currentQuestion: null,
+                interviewProgress: 0,
+                participants: participants.map(p => ({
+                  identity: p.identity,
+                  name: p.name || 'Unknown',
+                  isAgent: p.identity?.includes('agent') || false,
+                  isCandidate: p.identity?.includes('candidate') || false,
+                  joinedAt: p.joinedAt ? new Date(Number(p.joinedAt) / 1000000).toISOString() : null
+                }))
+              });
+            } catch (roomError) {
+              console.log('Room not yet created or error:', roomError);
+              // Room doesn't exist yet, that's okay
+              return NextResponse.json({
+                status: 'success',
+                roomName: effectiveRoomName,
+                agentConnected: false,
+                candidateConnected: false,
+                participantCount: 0,
+                message: 'Room not yet created, will be created when candidate joins'
+              });
+            }
+          } else {
+            return NextResponse.json({
+              status: 'not_found',
+              message: 'No active interview found for this candidate'
+            });
+          }
         }
       } catch (error) {
-        console.log('Backend status check failed, falling back to LiveKit:', error);
+        console.log('⚠️ Backend status check failed:', error);
       }
     }
 
-    // Fallback to LiveKit room status if backend is not available
+    // Fallback: Check LiveKit directly
     const roomService = new RoomServiceClient(serverUrl, apiKey, apiSecret);
-
+    const effectiveRoomName = roomName || `interview-${candidateId}`;
+    
     try {
-      // Get room information
-      const rooms = await roomService.listRooms([roomName]);
-      const room = rooms.find(r => r.name === roomName);
-
-      if (!room) {
-        return NextResponse.json({ 
-          status: 'room_not_found',
-          participants: [],
-          agentConnected: false 
-        });
-      }
-
-      // Get participants in the room
-      const participants = await roomService.listParticipants(roomName);
+      const participants = await roomService.listParticipants(effectiveRoomName);
       
-      // Check if AI agent is connected (participants with identity starting with 'interview-agent')
-      let agentConnected = participants.some(p => 
-        p.identity?.startsWith('interview-agent')
+      const agentConnected = participants.some(p => 
+        p.identity?.includes('agent')
       );
-
-      // Also check room metadata for agent status (for mock agents)
-      const roomMetadata = room.metadata ? JSON.parse(room.metadata) : null;
-      if (roomMetadata?.status === 'agent_connected') {
-        agentConnected = true;
-      }
-
+      
       const candidateConnected = participants.some(p => 
-        p.identity?.startsWith('candidate')
+        p.identity?.includes('candidate')
       );
 
       return NextResponse.json({
         status: 'success',
-        roomName,
-        participants: participants.map(p => ({
-          identity: p.identity,
-          name: p.name,
-          isAgent: p.identity?.startsWith('interview-agent') || false,
-          isCandidate: p.identity?.startsWith('candidate') || false,
-          joinedAt: p.joinedAt ? new Date(Number(p.joinedAt)).toISOString() : null
-        })),
+        roomName: effectiveRoomName,
         agentConnected,
         candidateConnected,
         participantCount: participants.length,
-        roomMetadata: roomMetadata
+        participants: participants.map(p => ({
+          identity: p.identity,
+          name: p.name || 'Unknown',
+          isAgent: p.identity?.includes('agent') || false,
+          isCandidate: p.identity?.includes('candidate') || false,
+          joinedAt: p.joinedAt ? new Date(Number(p.joinedAt) / 1000000).toISOString() : null
+        }))
       });
 
     } catch (error: any) {
       console.error('Error getting room status:', error);
       return NextResponse.json({ 
-        status: 'error',
+        status: 'room_not_found',
         error: error.message,
-        agentConnected: false 
-      }, { status: 500 });
+        agentConnected: false,
+        candidateConnected: false
+      });
     }
 
   } catch (e: any) {
     console.error('Agent status error:', e);
     return NextResponse.json({ 
+      status: 'error',
       error: e?.message || 'Failed to get agent status' 
     }, { status: 500 });
   }

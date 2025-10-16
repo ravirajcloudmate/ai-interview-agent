@@ -1,4 +1,6 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Jobly.Ai - Smart Hiring Platform
+
+This is a [Next.js](https://nextjs.org) project for Jobly.Ai, an AI-powered interview management and hiring platform.
 
 ## Getting Started
 

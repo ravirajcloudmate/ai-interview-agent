@@ -16,7 +16,9 @@ import {
   Video,
   Sun,
   Moon,
-  Loader2
+  Loader2,
+  FileCode,
+  BotMessageSquare
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -129,16 +131,37 @@ const Sidebar = ({ user, activeModule = 'dashboard', onModuleChange, onCollapseC
     }
   };
 
-  const menuItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'profile', label: 'Company Profile', icon: Building2 },
-    { id: 'jobs', label: 'Job Postings', icon: Briefcase },
-    { id: 'interviews', label: 'Interview Management', icon: Users },
-    { id: 'interview-live', label: 'Interview Live', icon: Video },
-    { id: 'reports', label: 'Candidate Reports', icon: FileText },
-    { id: 'analytics', label: 'Analytics & Insights', icon: BarChart3 },
-    { id: 'subscription', label: 'Subscription & Billing', icon: CreditCard },
-    { id: 'settings', label: 'Settings & Security', icon: Settings },
+  const menuGroups = [
+    {
+      title: 'Overview',
+      items: [
+        { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+      ],
+    },
+    {
+      title: 'Company',
+      items: [
+        { id: 'profile', label: 'Company Profile', icon: Building2 },
+        { id: 'subscription', label: 'Subscription & Billing', icon: CreditCard },
+        { id: 'settings', label: 'Settings & Security', icon: Settings },
+      ],
+    },
+    {
+      title: 'Hiring',
+      items: [
+        { id: 'jobs', label: 'Job Postings', icon: Briefcase },
+        { id: 'interviews', label: 'Interview Management', icon: Users },
+        { id: 'interview-live', label: 'Interview Live', icon: Video },
+        { id: 'prompt-template', label: 'AI Agent', icon: BotMessageSquare },
+      ],
+    },
+    {
+      title: 'Insights',
+      items: [
+        { id: 'reports', label: 'Candidate Reports', icon: FileText },
+        { id: 'analytics', label: 'Analytics & Insights', icon: BarChart3 },
+      ],
+    },
   ];
 
   return (
@@ -152,15 +175,23 @@ const Sidebar = ({ user, activeModule = 'dashboard', onModuleChange, onCollapseC
                 <img src={user.logoUrl} alt="Logo" className="h-8 w-8 object-cover" />
               ) : (
             <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none">
-              <path d="M12 2C17.52 2 22 6.48 22 12C22 17.52 17.52 22 12 22C6.48 22 2 17.52 2 12C2 6.48 6.48 2 12 2Z" fill="#3B82F6" />
-              <rect x="7" y="7" width="10" height="8" rx="2" fill="#1E40AF" />
-              <path d="M9.5 9L9.5 15L15.5 12L9.5 9Z" fill="black" />
+              <defs>
+                <linearGradient id="sidebarHeadGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stopColor="#1e40af" stopOpacity="1" />
+                  <stop offset="50%" stopColor="#3b82f6" stopOpacity="1" />
+                  <stop offset="100%" stopColor="#60a5fa" stopOpacity="1" />
+                </linearGradient>
+              </defs>
+              <rect width="24" height="24" fill="#000000"/>
+              <path d="M6 6 C6 4, 8 2, 12 2 C16 2, 18 4, 18 6 C18 8, 20 10, 20 14 C20 16, 18 18, 14 20 C12 22, 10 22, 8 20 C6 20, 4 18, 4 14 C4 10, 6 8, 6 6 Z" fill="url(#sidebarHeadGradient)"/>
+              <rect x="7.5" y="5.5" width="6" height="4.5" rx="1" fill="#1e40af"/>
+              <path d="M9 7 L9 10 L12 8.5 Z" fill="#000000"/>
             </svg>
               )}
           </div>
             {!isCollapsed && (
           <div>
-            <h2 className="font-semibold">InterviewAI</h2>
+            <h2 className="font-semibold">Jobly.Ai</h2>
             <p className="text-xs text-muted-foreground">Dashboard</p>
           </div>
             )}
@@ -178,28 +209,50 @@ const Sidebar = ({ user, activeModule = 'dashboard', onModuleChange, onCollapseC
 
       {/* Navigation Menu */}
       <nav className="flex-1 p-2">
-        <div className="space-y-1">
-          {menuItems.map((item) => (
-            <div key={item.id} className="relative group">
-            <Button
-              variant={activeModule === item.id ? 'secondary' : 'ghost'}
-                className={`w-full ${
-                  isCollapsed 
-                    ? 'justify-center p-2' 
-                    : 'justify-start gap-3 px-3'
-                } ${
-                activeModule === item.id ? 'bg-secondary' : 'hover:bg-secondary/50'
-              }`}
-              onClick={() => onModuleChange?.(item.id)}
-            >
-              <item.icon className="h-4 w-4" />
-                {!isCollapsed && <span className="text-sm">{item.label}</span>}
-            </Button>
-              
-              {/* Tooltip for collapsed state */}
-              {isCollapsed && (
-                <div className="absolute left-full ml-2 top-1/2 transform -translate-y-1/2 bg-gray-900 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-50">
-                  {item.label}
+        <div className="space-y-2">
+          {menuGroups.map((group, groupIndex) => (
+            <div key={group.title}>
+              {!isCollapsed && (
+                <div className="px-3 py-2">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{group.title}</p>
+                </div>
+              )}
+              <div className="space-y-1">
+                {group.items.map((item) => (
+                  <div key={item.id} className="relative group">
+                    <Button
+                      variant={activeModule === item.id ? 'secondary' : 'ghost'}
+                      className={`w-full ${
+                        isCollapsed 
+                          ? 'justify-center p-2' 
+                          : 'justify-start gap-3 px-3'
+                      } ${
+                        activeModule === item.id ? 'bg-secondary' : 'hover:bg-secondary/50'
+                      }`}
+                      onClick={() => {
+                        if (onModuleChange) {
+                          onModuleChange(item.id);
+                        } else if (typeof window !== 'undefined') {
+                          const target = item.id === 'interview-live' ? '/interview' : `/${item.id}`;
+                          window.location.href = target;
+                        }
+                      }}
+                    >
+                      <item.icon className="h-4 w-4" style={{ color: '#ff0000' }} />
+                      {!isCollapsed && <span className="text-sm">{item.label}</span>}
+                    </Button>
+                    {isCollapsed && (
+                      <div className="absolute left-full ml-2 top-1/2 transform -translate-y-1/2 bg-gray-900 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-50">
+                        {item.label}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {/* Separator between groups */}
+              {groupIndex < menuGroups.length - 1 && (
+                <div className="px-3">
+                  <Separator className="my-2" />
                 </div>
               )}
             </div>
@@ -218,7 +271,7 @@ const Sidebar = ({ user, activeModule = 'dashboard', onModuleChange, onCollapseC
             >
               {/* User Avatar */}
               <Avatar className="h-10 w-10">
-                <AvatarFallback className="bg-blue-600 text-white font-semibold">
+                <AvatarFallback className="text-white font-semibold" style={{ backgroundColor: '#ff0000' }}>
                   {user.initials}
                 </AvatarFallback>
               </Avatar>
@@ -233,7 +286,7 @@ const Sidebar = ({ user, activeModule = 'dashboard', onModuleChange, onCollapseC
             <div className="flex items-center gap-3">
               {/* User Avatar */}
               <Avatar className="h-10 w-10">
-                <AvatarFallback className="bg-blue-600 text-white font-semibold">
+                <AvatarFallback className="text-white font-semibold" style={{ backgroundColor: '#ff0000' }}>
                   {user.initials}
                 </AvatarFallback>
               </Avatar>

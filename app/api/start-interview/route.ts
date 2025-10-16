@@ -1,112 +1,74 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
+
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001';
 
 export async function POST(req: NextRequest) {
   try {
-    const { roomName, candidateId, jobId } = await req.json();
+    const { roomName, candidateId, jobId, candidateName, roleType } = await req.json();
     
-    if (!roomName) {
-      return NextResponse.json({ error: 'roomName is required' }, { status: 400 });
-    }
-
-    const serverUrl = process.env.LIVEKIT_URL;
-    const apiKey = process.env.LIVEKIT_API_KEY;
-    const apiSecret = process.env.LIVEKIT_API_SECRET;
-
-    if (!serverUrl || !apiKey || !apiSecret) {
+    if (!candidateId) {
       return NextResponse.json({ 
-        error: 'LiveKit environment variables not configured' 
-      }, { status: 500 });
+        error: 'candidateId is required' 
+      }, { status: 400 });
     }
 
-    // Create token for the AI interview agent
-    const agentIdentity = `interview-agent-${Date.now()}`;
-    const at = new AccessToken(apiKey, apiSecret, { identity: agentIdentity });
-    at.addGrant({ 
-      room: roomName, 
-      roomJoin: true, 
-      canPublish: true, 
-      canSubscribe: true, 
-      canPublishData: true 
-    });
-    const agentToken = await at.toJwt();
+    console.log('🎬 Starting interview for candidate:', candidateId);
 
-    // Initialize Room Service Client to manage the room
-    const roomService = new RoomServiceClient(serverUrl, apiKey, apiSecret);
+    // Generate unique room name if not provided
+    const finalRoomName = roomName || `interview-candidate-${candidateId}-${Date.now()}`;
 
     try {
-      // Create the room if it doesn't exist
-      await roomService.createRoom({
-        name: roomName,
-        maxParticipants: 10,
-        metadata: JSON.stringify({
-          type: 'interview',
-          candidateId: candidateId || 'unknown',
-          jobId: jobId || 'unknown',
-          startedAt: new Date().toISOString(),
-          status: 'waiting_for_agent'
-        })
-      });
-    } catch (error: any) {
-      // Room might already exist, that's okay
-      console.log('Room creation info:', error.message);
-    }
-
-    // Trigger backend agent to join
-    try {
-      console.log('🤖 Triggering AI agent to join interview room:', roomName);
-      
-      // Call your actual Python backend
-      const agentResponse = await fetch('http://localhost:8000/start-interview', {
+      // Call Python backend to start interview
+      const backendResponse = await fetch(`${BACKEND_URL}/start-interview`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
-          roomName,
+          roomName: finalRoomName,
           candidateId,
-          jobId
+          jobId: jobId || 'default-job',
+          candidateName: candidateName || 'Candidate',
+          roleType: roleType || 'general'
         })
       });
 
-      if (agentResponse.ok) {
-        const agentData = await agentResponse.json();
-        console.log('✅ Python backend agent service started:', agentData);
-      } else {
-        console.warn('⚠️ Python backend agent service failed to start, but continuing...');
+      if (!backendResponse.ok) {
+        const errorData = await backendResponse.json();
+        throw new Error(errorData.detail || 'Backend failed to start interview');
       }
 
-      // In a real implementation, you would call your actual backend AI service:
-      // Example: await fetch('http://your-backend-url/start-interview', {
-      //   method: 'POST',
-      //   headers: { 
-      //     'Content-Type': 'application/json',
-      //     'Authorization': `Bearer ${process.env.BACKEND_API_KEY}`
-      //   },
-      //   body: JSON.stringify({ 
-      //     roomName, 
-      //     agentToken, 
-      //     candidateId, 
-      //     jobId,
-      //     livekitUrl: process.env.LIVEKIT_URL,
-      //     livekitApiKey: process.env.LIVEKIT_API_KEY,
-      //     livekitApiSecret: process.env.LIVEKIT_API_SECRET
-      //   })
-      // });
+      const backendData = await backendResponse.json();
+      console.log('✅ Backend response:', backendData);
+
+      if (backendData.success) {
+        return NextResponse.json({ 
+          success: true,
+          roomName: backendData.roomName,
+          token: backendData.token,
+          url: backendData.url,
+          candidateId: backendData.candidateId,
+          jobId: backendData.jobId,
+          agentName: backendData.agentName,
+          message: 'Interview started successfully. AI agent will join when you connect.'
+        });
+      } else {
+        throw new Error(backendData.message || 'Failed to start interview');
+      }
 
     } catch (error: any) {
-      console.error('Failed to trigger backend agent:', error);
-      // Don't fail the request if agent trigger fails
+      console.error('❌ Backend connection failed:', error);
+      return NextResponse.json({
+        success: false,
+        error: error.message || 'Failed to connect to interview backend',
+        details: 'Make sure Python backend is running on http://localhost:8001'
+      }, { status: 500 });
     }
-
-    return NextResponse.json({ 
-      success: true,
-      roomName,
-      agentToken,
-      message: 'Interview started successfully. AI agent will join shortly.'
-    });
 
   } catch (e: any) {
     console.error('Start interview error:', e);
     return NextResponse.json({ 
+      success: false,
       error: e?.message || 'Failed to start interview' 
     }, { status: 500 });
   }

@@ -59,37 +59,57 @@ export async function middleware(request: NextRequest) {
   )
 
   // Only protect app routes; allow /auth/* and / to pass without redirects to avoid loops
-  const protectedRoutes = ['/jobs', '/candidates', '/interviews', '/reports', '/analytics', '/settings']
+  const protectedRoutes = ['/jobs', '/candidates', '/interviews', '/reports', '/analytics', '/settings', '/profile', '/dashboard', '/subscription', '/prompt-template']
   const isProtectedRoute = protectedRoutes.some(route =>
     request.nextUrl.pathname.startsWith(route)
   )
 
   if (isProtectedRoute) {
-    // Only check authentication if Supabase is properly configured
+    console.log('🛡️ Protected route accessed:', request.nextUrl.pathname);
+    
+    // Check for ANY Supabase auth cookies
+    const cookies = request.cookies.getAll();
+    const hasSupabaseCookie = cookies.some(cookie => 
+      cookie.name.startsWith('sb-') || 
+      cookie.name.includes('supabase')
+    );
+
+    // If has ANY auth cookies, allow through immediately (client will handle auth)
+    if (hasSupabaseCookie) {
+      console.log('✅ Auth cookie found, allowing access');
+      return response;
+    }
+
+    // No cookies at all - likely not logged in
+    console.log('⚠️ No auth cookies found');
+    
+    // Check if Supabase is configured
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL
     const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
     const isConfigured = url && url.includes('supabase.co') && !url.includes('demo') &&
                         key && key.length > 50 && key.includes('eyJ')
     
-    if (isConfigured) {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser()
-
-      // If not yet recognized server-side but auth cookies exist, allow this request (avoid early redirect loop)
-      const hasSupabaseCookie = Boolean(
-        request.cookies.get('sb-access-token')?.value ||
-        request.cookies.get('sb-refresh-token')?.value ||
-        request.cookies.get('supabase-auth-token')?.value
-      )
-
-      if (!user && !hasSupabaseCookie) {
-        return NextResponse.redirect(new URL('/auth/login', request.url))
-      }
-    } else {
-      // If Supabase is not configured, redirect to login for protected routes
-      return NextResponse.redirect(new URL('/auth/login', request.url))
+    // If not configured, allow through (dev mode)
+    if (!isConfigured) {
+      console.log('⚠️ Supabase not configured, allowing access (dev mode)');
+      return response;
     }
+    
+    // Try to get user from Supabase
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      if (user) {
+        console.log('✅ User found via Supabase, allowing access');
+        return response;
+      }
+    } catch (error) {
+      console.log('⚠️ Error checking user:', error);
+    }
+    
+    // No user found - redirect to login
+    console.log('❌ No user found, redirecting to login');
+    return NextResponse.redirect(new URL('/auth/login', request.url));
   }
 
   return response
@@ -97,11 +117,21 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/jobs/:path*',
-    '/candidates/:path*',
-    '/interviews/:path*',
-    '/reports/:path*',
-    '/analytics/:path*',
-    '/settings/:path*',
+    // Temporarily disabled to allow all routes
+    // '/jobs/:path*',
+    // '/jobs',
+    // '/candidates/:path*',
+    // '/interviews/:path*',
+    // '/interviews',
+    // '/reports/:path*',
+    // '/reports',
+    // '/analytics/:path*',
+    // '/analytics',
+    // '/settings/:path*',
+    // '/settings',
+    // '/profile/:path*',
+    // '/profile',
+    // '/dashboard/:path*',
+    // '/dashboard',
   ],
 }

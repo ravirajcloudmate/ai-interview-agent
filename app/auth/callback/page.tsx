@@ -1,11 +1,15 @@
+
 'use client'
 
+export const dynamic = 'force-dynamic'
+
 import { useEffect, useState } from 'react'
+import { Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { LoginLoader } from '@/app/components/LoginLoader'
 
-export default function AuthCallbackPage() {
+function AuthCallbackInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [error, setError] = useState<string | null>(null)
@@ -95,5 +99,13 @@ export default function AuthCallbackPage() {
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-purple-50">
       <LoginLoader />
     </div>
+  )
+}
+
+export default function AuthCallbackPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-purple-50"><LoginLoader /></div>}>
+      <AuthCallbackInner />
+    </Suspense>
   )
 }
