@@ -8,9 +8,45 @@ const apiSecret = process.env.LIVEKIT_API_SECRET!;
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
   const sessionId = searchParams.get('sessionId');
+  const roomName = searchParams.get('roomName');
+  const username = searchParams.get('username');
 
+  // Handle direct room access (new format)
+  if (roomName && username) {
+    console.log('🎫 Generating token for direct room access:', { roomName, username });
+    
+    const participantName = username;
+
+    // Generate access token for participant
+    const at = new AccessToken(apiKey, apiSecret, {
+      identity: participantName,
+      name: participantName,
+    });
+
+    at.addGrant({
+      room: roomName,
+      roomJoin: true,
+      canPublish: true,
+      canSubscribe: true,
+      canPublishData: true,
+    });
+
+    const token = await at.toJwt();
+
+    console.log('✅ Direct room token generated successfully');
+    console.log('  Room:', roomName);
+    console.log('  Participant:', participantName);
+
+    return NextResponse.json({
+      token,
+      roomName,
+      participantName,
+    });
+  }
+
+  // Handle session-based access (existing format)
   if (!sessionId) {
-    return NextResponse.json({ error: 'Session ID required' }, { status: 400 });
+    return NextResponse.json({ error: 'Session ID or roomName required' }, { status: 400 });
   }
 
   try {
@@ -49,7 +85,7 @@ export async function GET(request: NextRequest) {
       apiKey,
       apiSecret
     );
-
+console.log(roomService,'here is the room service');
     try {
       // Try to create room with metadata
       await roomService.createRoom({
@@ -58,7 +94,7 @@ export async function GET(request: NextRequest) {
         emptyTimeout: 300, // 5 minutes
         maxParticipants: 10,
       });
-      console.log('✅ Room created with metadata');
+      console.log('✅ Room created with metadata' ,roomService);
     } catch (err: any) {
       // Room might already exist, update metadata
       if (err.message?.includes('already exists')) {

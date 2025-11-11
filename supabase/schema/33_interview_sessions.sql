@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS interview_sessions (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   invitation_id UUID REFERENCES interview_invitations(id),
   job_id UUID REFERENCES job_postings(id),
-  agent_id TEXT NOT NULL, -- AI Agent template ID
+  agent_id UUID REFERENCES prompt_templates(id) ON DELETE SET NULL, -- AI Agent template ID (UUID)
   agent_prompt TEXT NOT NULL, -- Agent's interview prompt
   candidate_email TEXT NOT NULL,
   candidate_name TEXT,
@@ -45,6 +45,7 @@ CREATE INDEX IF NOT EXISTS idx_interview_sessions_token ON interview_sessions(se
 CREATE INDEX IF NOT EXISTS idx_interview_sessions_room_id ON interview_sessions(room_id);
 CREATE INDEX IF NOT EXISTS idx_interview_sessions_status ON interview_sessions(status);
 CREATE INDEX IF NOT EXISTS idx_interview_sessions_candidate_email ON interview_sessions(candidate_email);
+CREATE INDEX IF NOT EXISTS idx_interview_sessions_agent_id ON interview_sessions(agent_id);
 CREATE INDEX IF NOT EXISTS idx_interview_messages_session_id ON interview_messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_interview_messages_timestamp ON interview_messages(timestamp);
 

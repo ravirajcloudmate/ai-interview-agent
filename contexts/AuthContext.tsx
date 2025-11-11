@@ -25,11 +25,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter()
 
   useEffect(() => {
-    // Set a timeout to prevent infinite loading
+    // Set a timeout to prevent infinite loading (increased for hard refresh)
     const loadingTimeout = setTimeout(() => {
       console.warn('⚠️ Authentication loading timeout, setting loading to false')
       setLoading(false)
-    }, 3000) // 3 second timeout
+    }, 5000) // 5 second timeout for hard refresh scenarios
 
     // Get initial session
     const getInitialSession = async () => {
@@ -44,13 +44,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         console.log('✅ Supabase configured, getting session...')
-        const { data: { session }, error } = await supabase.auth.getSession()
+        
+        // Try to get session - retry once if fails (for hard refresh)
+        let session = null
+        let error = null
+        
+        // First attempt
+        const { data: { session: firstSession }, error: firstError } = await supabase.auth.getSession()
+        
+        if (firstError) {
+          console.warn('⚠️ First session check failed, retrying...', firstError)
+          // Retry after a short delay (for hard refresh scenarios)
+          await new Promise(resolve => setTimeout(resolve, 500))
+          const { data: { session: retrySession }, error: retryError } = await supabase.auth.getSession()
+          session = retrySession
+          error = retryError
+        } else {
+          session = firstSession
+        }
         
         if (error) {
-          console.error('❌ Error getting session:', error)
+          console.error('❌ Error getting session after retry:', error)
           setLoading(false)
           setUser(null)
           setSession(null)
+          clearTimeout(loadingTimeout)
           return
         }
         
@@ -58,15 +76,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setSession(session)
         setUser(session?.user ?? null)
         setLoading(false)
+        clearTimeout(loadingTimeout)
       } catch (error) {
         console.error('❌ Error in getInitialSession:', error)
         setLoading(false)
         setUser(null)
         setSession(null)
+        clearTimeout(loadingTimeout)
       }
     }
 
     getInitialSession()
+    
+    return () => clearTimeout(loadingTimeout)
 
     // Listen for auth changes (only if Supabase is configured)
     let subscription = null

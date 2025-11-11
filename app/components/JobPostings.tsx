@@ -13,7 +13,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { 
-  Plus, 
+  FileUser,
   Edit, 
   Trash2, 
   Copy, 
@@ -228,22 +228,29 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
         filter: `id=eq.${user?.id}` 
       }, handleRealtimeUpdate);
 
-      channel.subscribe((status) => {
+      channel.subscribe((status, err) => {
         console.log('JobPostings realtime subscription status:', status, 'for channel:', channelName);
         
         if (status === 'SUBSCRIBED') {
           console.log('JobPostings: Successfully subscribed to realtime updates');
         } else if (status === 'CHANNEL_ERROR') {
-          console.error('JobPostings: Realtime subscription error');
-          // Retry subscription after a delay
-          setTimeout(() => {
-            console.log('JobPostings: Retrying realtime subscription...');
-            setReloadKey(prev => prev + 1);
-          }, 5000);
+          // Log error details but don't show to user (realtime is optional)
+          console.warn('JobPostings: Realtime subscription error (this is non-critical):', {
+            status,
+            error: err,
+            message: err?.message,
+            hint: 'Realtime updates may not be enabled for job_postings table. Manual refresh will still work.'
+          });
+          // Don't retry automatically - realtime is optional
+        } else if (status === 'TIMED_OUT') {
+          console.warn('JobPostings: Realtime subscription timed out (this is non-critical)');
+        } else if (status === 'CLOSED') {
+          console.log('JobPostings: Realtime channel closed');
         }
       });
     } catch (e) { 
-      console.error('JobPostings realtime setup error:', e); 
+      // Realtime is optional - log as warning, not error
+      console.warn('JobPostings realtime setup error (non-critical):', e); 
     }
 
     return () => { 
@@ -488,6 +495,27 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
         return;
       }
 
+      // Validate that ai_interview_template is a valid UUID
+      const templateId = formData.ai_interview_template.trim();
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(templateId);
+      
+      if (!isUUID) {
+        setError('Please select a valid AI interview template. Template must be saved to database first.');
+        return;
+      }
+
+      // Verify template exists in database
+      const { data: template } = await supabase
+        .from('prompt_templates')
+        .select('id')
+        .eq('id', templateId)
+        .maybeSingle();
+
+      if (!template) {
+        setError('Selected template not found. Please select a valid template from the database.');
+        return;
+      }
+
       // Create job using RPC function
       console.log('Creating job with data:', {
         p_company_id: resolvedCompanyId,
@@ -495,7 +523,7 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
         p_job_title: formData.job_title.trim(),
         p_department: formData.department.trim(),
         p_job_description: formData.job_description.trim(),
-        p_ai_interview_template: formData.ai_interview_template.trim(),
+        p_ai_interview_template: formData.ai_interview_template,
         p_interview_mode: formData.interview_mode,
         p_interview_language: formData.interview_language,
         p_employment_type: formData.employment_type,
@@ -517,7 +545,7 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
           p_job_title: formData.job_title.trim(),
           p_department: formData.department.trim(),
           p_job_description: formData.job_description.trim(),
-          p_ai_interview_template: formData.ai_interview_template.trim(),
+          p_ai_interview_template: templateId,  // Use validated UUID
           p_interview_mode: formData.interview_mode,
           p_interview_language: formData.interview_language,
           p_employment_type: formData.employment_type,
@@ -555,8 +583,16 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
           });
 
         if (updateError) {
-          console.error('Error publishing job:', updateError);
-          setError('Job created but failed to publish');
+          console.error('Error publishing job:', {
+            message: updateError.message,
+            details: updateError.details,
+            hint: updateError.hint,
+            code: updateError.code,
+            fullError: JSON.stringify(updateError, null, 2)
+          });
+          const errorMessage = updateError.message || updateError.details || 'Unknown error occurred';
+          setError(`Job created but failed to publish: ${errorMessage}`);
+          return; // Exit early to prevent showing success notification
         }
       }
 
@@ -576,9 +612,15 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
       // Trigger global refresh for other components
       triggerJobPostingsRefresh();
       
-    } catch (err) {
-      console.error('Error creating job:', err);
-      setError('Failed to create job posting');
+    } catch (err: any) {
+      console.error('Error creating job:', {
+        error: err,
+        message: err?.message,
+        stack: err?.stack,
+        stringified: JSON.stringify(err, Object.getOwnPropertyNames(err))
+      });
+      const errorMessage = err?.message || 'An unexpected error occurred';
+      setError(`Failed to create job posting: ${errorMessage}`);
     } finally {
       setFormLoading(false);
     }
@@ -596,8 +638,20 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
         });
       
       if (error) {
-        console.error('Error updating job:', error);
-        setError('Failed to update job');
+        // Log error details comprehensively
+        const errorDetails = {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+        };
+        console.error('Error updating job:', errorDetails);
+        console.error('Full error object:', error);
+        console.error('Error stringified:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
+        
+        const errorMessage = error.message || error.details || error.hint || 'Unknown error occurred';
+        setError(`Failed to update job: ${errorMessage}`);
+        return; // Exit early to prevent showing success
       } else {
         // Show success notification for update
         showNotification(
@@ -613,9 +667,15 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
         // Trigger global refresh for other components
         triggerJobPostingsRefresh();
       }
-    } catch (err) {
-      console.error('Error updating job:', err);
-      setError('Failed to update job');
+    } catch (err: any) {
+      console.error('Error updating job:', {
+        error: err,
+        message: err?.message,
+        stack: err?.stack,
+        stringified: JSON.stringify(err, Object.getOwnPropertyNames(err))
+      });
+      const errorMessage = err?.message || 'An unexpected error occurred';
+      setError(`Failed to update job: ${errorMessage}`);
     } finally {
       setFormLoading(false);
     }
@@ -627,38 +687,102 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
   };
 
   const handleDeleteJob = async () => {
-    if (!deletingJobId) return;
+    if (!deletingJobId) {
+      console.error('No job ID provided for deletion');
+      return;
+    }
     
     // Find the job being deleted to get its title
     const jobToDelete = jobs.find(job => job.id === deletingJobId);
     const jobTitle = jobToDelete?.job_title || 'Job position';
     
+    // Validate job ID format (should be UUID)
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(deletingJobId)) {
+      console.error('Invalid job ID format:', deletingJobId);
+      setError('Invalid job ID format');
+      showNotification(
+        'error',
+        'Invalid job ID',
+        'The job ID is not in a valid format.'
+      );
+      return;
+    }
+    
     try {
       setError('');
-      const { error } = await supabase
+      setFormLoading(true);
+      
+      console.log('Attempting to delete job with ID:', deletingJobId);
+      
+      const { data, error } = await supabase
         .rpc('delete_job_posting', { p_job_id: deletingJobId });
       
+      console.log('Delete job RPC response:', { data, error });
+      
       if (error) {
-        console.error('Error deleting job:', error);
-        setError('Failed to delete job');
-      } else {
-        // Show delete notification
-        showNotification(
-          'delete',
-          'Deleted your job position',
-          `${jobTitle} has been permanently removed.`
-        );
-
-        await loadJobs();
-        setIsDeleteDialogOpen(false);
-        setDeletingJobId(null);
+        // Log detailed error information
+        console.error('Error deleting job:', {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+          fullError: JSON.stringify(error, null, 2)
+        });
         
-        // Trigger global refresh for other components
-        triggerJobPostingsRefresh();
+        // Provide more specific error message
+        const errorMessage = error.message || error.details || 'Unknown error occurred';
+        setError(`Failed to delete job: ${errorMessage}`);
+        showNotification(
+          'error',
+          'Failed to delete job',
+          `Unable to delete ${jobTitle}. Please try again.`
+        );
+      } else {
+        // Check if deletion was successful (RPC returns boolean)
+        // If data is false or null, the job might not have been found
+        if (data === false) {
+          console.warn('Job deletion returned false - job may not exist');
+          setError('Job not found or already deleted');
+          showNotification(
+            'error',
+            'Job not found',
+            'The job posting may have already been deleted.'
+          );
+        } else {
+          // Show delete notification
+          showNotification(
+            'delete',
+            'Deleted your job position',
+            `${jobTitle} has been permanently removed.`
+          );
+
+          await loadJobs();
+          setIsDeleteDialogOpen(false);
+          setDeletingJobId(null);
+          
+          // Trigger global refresh for other components
+          triggerJobPostingsRefresh();
+        }
       }
-    } catch (err) {
-      console.error('Error deleting job:', err);
-      setError('Failed to delete job');
+    } catch (err: any) {
+      // Handle unexpected errors
+      console.error('Unexpected error deleting job:', {
+        error: err,
+        message: err?.message,
+        stack: err?.stack,
+        stringified: JSON.stringify(err, Object.getOwnPropertyNames(err))
+      });
+      
+      const errorMessage = err?.message || 'An unexpected error occurred';
+      setError(`Failed to delete job: ${errorMessage}`);
+      showNotification(
+        'error',
+        'Failed to delete job',
+        `Unable to delete ${jobTitle}. Please try again.`
+      );
+    } finally {
+      setFormLoading(false);
     }
   };
 
@@ -837,7 +961,7 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
         <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
           <DialogTrigger asChild>
             <Button size="lg" className="gap-2 bg-[#e30d0d] hover:bg-[#c50c0c] text-white" onClick={() => { resetForm(); setIsCreateDialogOpen(true); }}>
-              <Plus className="h-4 w-4" />
+              <FileUser className="h-4 w-4" />
               Create New Job
             </Button>
           </DialogTrigger>
@@ -1197,7 +1321,7 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
                 </p>
                 {jobs.length === 0 && (
                   <Button onClick={() => setIsCreateDialogOpen(true)} className="gap-2 bg-[#e30d0d] hover:bg-[#c50c0c] text-white">
-                    <Plus className="h-4 w-4" />
+                    <FileUser className="h-4 w-4" />
                     Create Your First Job
                   </Button>
                 )}
@@ -1258,10 +1382,6 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
                         <Calendar className="h-4 w-4 text-muted-foreground" />
                         <span>Created {formatDate(job.created_at)}</span>
                       </div>
-                      <div className="flex items-center gap-1">
-                        <Users className="h-4 w-4 text-muted-foreground" />
-                        <span>{job.applications_count} applications</span>
-                      </div>
                     </div>
 
                     {/* Agent Assignment */}
@@ -1280,15 +1400,19 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
                     
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                      <Badge variant="outline">
-                          {job.experience_level.replace('-', ' ')}
+                        <Badge variant="outline">
+                          <Globe className="h-3 w-3 mr-1 inline" />
+                          {job.interview_language?.toUpperCase() || 'EN'}
                         </Badge>
                         <Badge variant="outline">
-                          {job.interview_duration}min interview
+                          {job.experience_level?.replace('-', ' ') || 'Mid Level'}
                         </Badge>
-                        <Badge variant="outline">
-                          {job.questions_count} questions
-                      </Badge>
+                        <Badge variant="outline" className="capitalize">
+                          {job.employment_type?.replace('-', ' ') || 'Full Time'}
+                        </Badge>
+                        {job.is_remote && (
+                          <Badge variant="outline">Remote</Badge>
+                        )}
                     </div>
                     
                     <div className="flex items-center gap-2">
@@ -1360,7 +1484,7 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
               <CardHeader>
                   <CardTitle>{job.job_title}</CardTitle>
                   <CardDescription>
-                    {job.department} • {job.applications_count} applications • Created {formatDate(job.created_at)}
+                    {job.department} • {job.interview_language?.toUpperCase() || 'EN'} • Created {formatDate(job.created_at)}
                   </CardDescription>
               </CardHeader>
                 <CardContent>
@@ -1371,7 +1495,10 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
                         {getModeIcon(job.interview_mode)}
                         <span className="capitalize">{job.interview_mode}</span>
                       </div>
-                      <Badge variant="outline">{job.experience_level.replace('-', ' ')}</Badge>
+                      <Badge variant="outline">{job.experience_level?.replace('-', ' ') || 'Mid Level'}</Badge>
+                      <Badge variant="outline" className="capitalize">
+                        {job.employment_type?.replace('-', ' ') || 'Full Time'}
+                      </Badge>
                     </div>
                     <div className="flex items-center gap-2">
                       <Button size="sm" variant="outline" onClick={() => openEditDialog(job)}>
@@ -1611,12 +1738,12 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
                   p_job_title: formData.job_title,
                   p_department: formData.department,
                   p_job_description: formData.job_description,
-                  p_ai_interview_template: formData.ai_interview_template,
+                  p_ai_interview_template: formData.ai_interview_template?.trim() || null,
                   p_interview_mode: formData.interview_mode,
                   p_interview_language: formData.interview_language,
                   p_employment_type: formData.employment_type,
                   p_experience_level: formData.experience_level,
-                  p_location: formData.location || null,
+                  p_location: formData.location?.trim() || null,
                   p_salary_min: formData.salary_min ? parseInt(formData.salary_min) : null,
                   p_salary_max: formData.salary_max ? parseInt(formData.salary_max) : null,
                   p_currency: formData.currency,
@@ -1816,10 +1943,20 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
             <Button 
               variant="destructive" 
               onClick={handleDeleteJob}
+              disabled={formLoading}
               className="gap-2"
             >
-              <Trash2 className="h-4 w-4" />
-              Yes, Delete
+              {formLoading ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="h-4 w-4" />
+                  Yes, Delete
+                </>
+              )}
             </Button>
             <Button 
               variant="outline" 
@@ -1827,6 +1964,7 @@ export function JobPostings({ user, globalRefreshKey }: JobPostingsProps) {
                 setIsDeleteDialogOpen(false);
                 setDeletingJobId(null);
               }}
+              disabled={formLoading}
             >
               Cancel
             </Button>

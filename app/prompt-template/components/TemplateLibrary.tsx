@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Search, FileText, Eye, Edit, Copy, Trash2, Plus, BotMessageSquare, Bot } from 'lucide-react';
+import { Search, FileText, Eye, Edit, Trash2, Plus, BotMessageSquare, Bot } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,7 +11,6 @@ interface TemplateLibraryProps {
   templates: PromptTemplate[];
   onView: (template: PromptTemplate) => void;
   onEdit: (template: PromptTemplate) => void;
-  onDuplicate: (template: PromptTemplate) => void;
   onDelete: (templateId: string) => void;
   onCreateAgent: () => void;
 }
@@ -20,7 +19,6 @@ export function TemplateLibrary({
   templates,
   onView,
   onEdit,
-  onDuplicate,
   onDelete,
   onCreateAgent
 }: TemplateLibraryProps) {
@@ -116,7 +114,9 @@ export function TemplateLibrary({
               <CardHeader className="pb-2">
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-start gap-2 flex-1 min-w-0">
-                    <Bot className="w-4 h-4 text-[#e30d0d] flex-shrink-0 mt-0.5" />
+                    <div className="flex-shrink-0 mt-0.5 p-1 rounded-md bg-[#ffe6e6] shadow-[0_4px_10px_rgba(227,13,13,0.25)]">
+                      <Bot className="w-4 h-4 text-[#e30d0d]" />
+                    </div>
                     <div className="min-w-0 flex-1">
                       <CardTitle className="text-sm leading-tight break-words pr-2">
                         {template.targetRole || template.name || 'AI Agent'}
@@ -147,15 +147,6 @@ export function TemplateLibrary({
                       title="Edit"
                     >
                       <Edit className="w-3 h-3" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => onDuplicate(template)}
-                      className="text-[#e30d0d] hover:bg-[#e30d0d]/10 h-6 w-6 p-0"
-                      title="Duplicate"
-                    >
-                      <Copy className="w-3 h-3" />
                     </Button>
                     <Button
                       variant="ghost"

@@ -1,96 +1,133 @@
+// app/api/start-interview/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
 
 export async function POST(request: NextRequest) {
   try {
-    const { sessionId, roomId } = await request.json();
+    const body = await request.json();
+    const { roomName, candidateId, jobId, candidateName } = body;
 
-    if (!sessionId) {
+    if (!roomName) {
       return NextResponse.json(
-        { error: 'Session ID is required' },
+        { error: 'Room name is required' },
         { status: 400 }
       );
     }
 
-    console.log('👤 Candidate joining session:', sessionId, 'Room:', roomId);
+    console.log('🎬 Starting interview...');
+    console.log('📍 Room:', roomName);
+    console.log('👤 Candidate:', candidateName || candidateId);
 
-    // Update session status to active
-    const { data: updatedSession, error: updateError } = await supabase
-      .from('interview_sessions')
-      .update({ 
-        status: 'active',
-        started_at: new Date().toISOString()
-      })
-      .eq('id', sessionId)
-      .select()
-      .maybeSingle();
-
-    if (updateError) {
-      console.error('❌ Error updating session status:', updateError);
-      return NextResponse.json(
-        { error: 'Failed to update session status: ' + updateError.message },
-        { status: 500 }
-      );
-    }
-
-    if (!updatedSession) {
-      console.warn('⚠️ Session not found for ID:', sessionId);
-      // Continue anyway - might be using fallback
-    }
-
-    // Notify Python backend that candidate joined
+    // Get backend URL
+    const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001';
+    
+    // First, check if backend is reachable
+    let backendAvailable = false;
     try {
-      console.log('📡 Notifying Python backend...');
-      const backendResponse = await fetch('http://localhost:8001/api/candidate-joined', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          sessionId,
-          roomId: roomId || updatedSession?.room_id,
-          candidateName: updatedSession?.candidate_name || 'Candidate',
-          candidateEmail: updatedSession?.candidate_email || ''
-        })
+      console.log('🏥 Checking backend health...');
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+      const healthResponse = await fetch(`${BACKEND_URL}/health`, {
+        method: 'GET',
+        signal: controller.signal
       });
 
+      clearTimeout(timeoutId);
+
+      if (healthResponse.ok) {
+        backendAvailable = true;
+        console.log('✅ Backend is available');
+      }
+    } catch (healthError: any) {
+      console.warn('⚠️ Backend health check failed:', healthError.message);
+      console.warn('💡 Make sure Python backend is running: python server.py');
+    }
+
+    // If backend not available, return helpful error
+    if (!backendAvailable) {
+      return NextResponse.json({
+        success: false,
+        error: 'Backend server not running',
+        message: 'Please start the Python backend server on port 8001',
+        note: 'Run: cd backend && python server.py',
+        backendUrl: BACKEND_URL
+      }, { status: 503 });
+    }
+
+    // Backend is available, proceed with start-interview request
+    try {
+      console.log('🚀 Sending start-interview request to backend...');
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+      const backendResponse = await fetch(`${BACKEND_URL}/start-interview`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          roomName,
+          candidateId,
+          jobId,
+          candidateName,
+          sessionId: body.sessionId || `session_${Date.now()}`
+        }),
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
       if (!backendResponse.ok) {
-        const errorText = await backendResponse.text();
-        console.warn('⚠️ Failed to notify Python backend:', errorText);
-      } else {
-        console.log('✅ Python backend notified successfully');
+        const errorText = await backendResponse.text().catch(() => 'Unknown error');
+        console.error('❌ Backend request failed:', backendResponse.status, errorText);
+        
+        return NextResponse.json({
+          success: false,
+          error: `Backend returned ${backendResponse.status}`,
+          details: errorText
+        }, { status: backendResponse.status });
       }
-    } catch (backendError) {
-      console.warn('⚠️ Error notifying Python backend:', backendError);
-      // Don't fail the request if backend notification fails
-    }
 
-    // Add initial message to interview_messages (optional)
-    if (updatedSession) {
-      try {
-        await supabase
-          .from('interview_messages')
-          .insert({
-            session_id: sessionId,
-            speaker: 'system',
-            message: `Candidate ${updatedSession.candidate_name || 'joined'} the interview`,
-            timestamp: new Date().toISOString()
-          });
-        console.log('✅ Interview message added');
-      } catch (messageError) {
-        console.warn('⚠️ Could not add interview message:', messageError);
-        // Don't fail the request if message insertion fails
-      }
-    }
+      const data = await backendResponse.json();
+      console.log('✅ Backend response:', data);
 
-    console.log('✅ Join process completed successfully');
-    return NextResponse.json({ 
-      success: true,
-      session: updatedSession || { id: sessionId, room_id: roomId }
-    });
+      return NextResponse.json({
+        success: true,
+        message: 'Interview start request sent to backend',
+        data
+      });
+
+    } catch (backendError: any) {
+      console.error('❌ Backend connection failed:', backendError);
+      
+      // More detailed error info
+      const errorDetails = {
+        message: backendError.message,
+        cause: backendError.cause,
+        name: backendError.name,
+        stack: backendError.stack
+      };
+      
+      console.error('Error details:', errorDetails);
+
+      return NextResponse.json({
+        success: false,
+        error: 'Failed to connect to backend',
+        message: 'Backend server may not be running',
+        note: 'Start backend with: cd backend && python server.py',
+        backendUrl: BACKEND_URL,
+        details: errorDetails
+      }, { status: 503 });
+    }
 
   } catch (error: any) {
-    console.error('❌ Error in join endpoint:', error);
+    console.error('❌ Start interview error:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to join session' },
+      { 
+        success: false,
+        error: 'Internal server error',
+        details: error.message 
+      },
       { status: 500 }
     );
   }

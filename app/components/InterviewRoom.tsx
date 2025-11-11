@@ -120,7 +120,7 @@ export default function InterviewRoom({ candidateId, jobId }: InterviewRoomProps
   const startInterview = async () => {
     try {
       setAgentStatus('initializing');
-      const response = await fetch('http://localhost:8000/start-interview', {
+      const response = await fetch('/api/start-interview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -150,8 +150,9 @@ export default function InterviewRoom({ candidateId, jobId }: InterviewRoomProps
         setError('Failed to start interview');
         console.error('Failed to start interview:', data);
       }
-    } catch (error) {
-      setError('Error connecting to server');
+    } catch (error: any) {
+      const message = error?.message || 'Error connecting to server';
+      setError(message);
       console.error('Error starting interview:', error);
     }
   };

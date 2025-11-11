@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS prompt_templates (
   company_id UUID REFERENCES companies(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   description TEXT,
+  assessment TEXT,
   prompt_text TEXT NOT NULL,
   category TEXT DEFAULT 'technical' CHECK (category IN ('technical', 'behavioral', 'hr', 'custom')),
   level TEXT DEFAULT 'mid' CHECK (level IN ('entry', 'mid', 'senior', 'lead')),
@@ -43,6 +44,7 @@ CREATE TRIGGER trigger_update_prompt_templates_updated_at
 COMMENT ON TABLE prompt_templates IS 'Stores interview prompt templates for AI agents';
 COMMENT ON COLUMN prompt_templates.name IS 'Display name of the prompt template';
 COMMENT ON COLUMN prompt_templates.description IS 'Brief description of what this template is for';
+COMMENT ON COLUMN prompt_templates.assessment IS 'Assessment criteria and evaluation methods for the interview';
 COMMENT ON COLUMN prompt_templates.prompt_text IS 'The actual prompt text content';
 COMMENT ON COLUMN prompt_templates.category IS 'Category of the prompt (technical, behavioral, hr, custom)';
 COMMENT ON COLUMN prompt_templates.is_active IS 'Whether this template is currently active/in use';

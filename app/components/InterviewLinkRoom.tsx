@@ -2,19 +2,19 @@ import { useState, useEffect, useRef } from 'react';
 import { Video, Mic, MicOff, VideoOff, Phone, MessageSquare } from 'lucide-react';
 
 export default function InterviewLinkRoom() {
-  const [sessionData, setSessionData] = useState(null);
+  const [sessionData, setSessionData] = useState<any>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [videoEnabled, setVideoEnabled] = useState(true);
   const [audioEnabled, setAudioEnabled] = useState(true);
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState<{ speaker: string; text: string; timestamp: Date }[]>([]);
   const [isAgentSpeaking, setIsAgentSpeaking] = useState(false);
   const [currentQuestion, setCurrentQuestion] = useState('');
   
-  const candidateVideoRef = useRef(null);
-  const agentVideoRef = useRef(null);
-  const localStreamRef = useRef(null);
-  const peerConnectionRef = useRef(null);
-  const wsRef = useRef(null);
+  const candidateVideoRef = useRef<HTMLVideoElement | null>(null);
+  const agentVideoRef = useRef<HTMLVideoElement | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
 
   // Get session ID from URL
   const sessionId = typeof window !== 'undefined' 
@@ -53,7 +53,7 @@ export default function InterviewLinkRoom() {
     }
   };
 
-  const connectWebSocket = (roomId) => {
+  const connectWebSocket = (roomId: string) => {
     // Connect to Python backend WebSocket
     const wsUrl = `ws://localhost:8001/ws/interview/${roomId}`;
     const ws = new WebSocket(wsUrl);
@@ -87,7 +87,7 @@ export default function InterviewLinkRoom() {
     wsRef.current = ws;
   };
 
-  const handleWebSocketMessage = (data) => {
+  const handleWebSocketMessage = (data: any) => {
     switch (data.type) {
       case 'agent_joined':
         console.log('AI Agent joined the interview');
@@ -145,7 +145,7 @@ export default function InterviewLinkRoom() {
     }
   };
 
-  const setupWebRTC = (stream) => {
+  const setupWebRTC = (stream: MediaStream) => {
     // WebRTC setup for real-time video/audio streaming
     const configuration = {
       iceServers: [
@@ -229,16 +229,16 @@ export default function InterviewLinkRoom() {
     }
   };
 
-  const addMessage = (speaker, text) => {
+  const addMessage = (speaker: string, text: string) => {
     setMessages(prev => [...prev, { speaker, text, timestamp: new Date() }]);
   };
 
-  const playAudio = (audioUrl) => {
+  const playAudio = (audioUrl: string) => {
     const audio = new Audio(audioUrl);
     audio.play();
   };
 
-  const handleInterviewEnd = (data) => {
+  const handleInterviewEnd = (data: any) => {
     alert('Interview completed! Thank you for your time.');
     window.location.href = `/interview/complete?session=${sessionId}`;
   };

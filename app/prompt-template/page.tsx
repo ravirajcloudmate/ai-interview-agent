@@ -1,8 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Library } from 'lucide-react';
+import { Library, AlertCircle, Trash2, Loader2 } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
 import Sidebar from '@/app/components/Sidebar';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
@@ -28,6 +30,9 @@ export default function PromptTemplatePage() {
   const [editingTemplate, setEditingTemplate] = useState<PromptTemplate | null>(null);
   const [viewingTemplate, setViewingTemplate] = useState<PromptTemplate | null>(null);
   const [toastMessage, setToastMessage] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [deletingTemplateId, setDeletingTemplateId] = useState<string | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   // Auto-save templates to storage whenever they change
   useEffect(() => {
@@ -124,7 +129,7 @@ export default function PromptTemplatePage() {
           name: dbTemplate.name,
           candidateName: dbTemplate.position || '',
           description: dbTemplate.description || '',
-          assessment: '',
+          assessment: dbTemplate.assessment || '',
           category: getCategoryFromDb(dbTemplate.category),
           targetRole: dbTemplate.position || '',
           experienceLevel: dbTemplate.level as 'junior' | 'mid' | 'senior' | 'lead',
@@ -204,62 +209,70 @@ export default function PromptTemplatePage() {
     setEditingTemplate(template);
   };
 
-  const handleDuplicateTemplate = (template: PromptTemplate) => {
-    const duplicated: PromptTemplate = {
-      ...template,
-      templateId: `template-${Date.now()}`,
-      name: `${template.name} (Copy)`,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      usageCount: 0
-    };
-    setTemplates(prev => [duplicated, ...prev]);
-    showToast('Template duplicated!');
+  const openDeleteDialog = (templateId: string) => {
+    setDeletingTemplateId(templateId);
+    setIsDeleteDialogOpen(true);
   };
 
-  const handleDeleteTemplate = async (templateId: string) => {
-    console.log('Delete button clicked for template:', templateId);
-    
-    const confirmed = window.confirm('Are you sure you want to delete this agent?');
-    
-    if (!confirmed) {
-      console.log('Delete cancelled by user');
+  const handleDeleteTemplate = async () => {
+    if (!deletingTemplateId) {
+      console.error('No template ID provided for deletion');
       return;
     }
     
-    console.log('Delete confirmed by user');
+    const templateId = deletingTemplateId;
+    const templateToDelete = templates.find(t => t.templateId === templateId);
+    const templateName = templateToDelete?.name || 'AI Agent';
     
-    // Check if this is a database template
-    const isDatabaseTemplate = !templateId.startsWith('template-');
+    console.log('Delete confirmed by user for template:', templateId);
     
-    if (isDatabaseTemplate && user?.id) {
-      try {
-        console.log('Deleting from database...');
-        const { error } = await supabase
-          .from('prompt_templates')
-          .delete()
-          .eq('id', templateId);
+    try {
+      setDeleteLoading(true);
+      
+      // Check if this is a database template
+      const isDatabaseTemplate = !templateId.startsWith('template-');
+      
+      if (isDatabaseTemplate && user?.id) {
+        try {
+          console.log('Deleting from database...');
+          const { error } = await supabase
+            .from('prompt_templates')
+            .delete()
+            .eq('id', templateId);
 
-        if (error) {
-          console.error('Database delete failed:', error);
-          showToast(`Failed to delete AI Agent: ${error.message || 'Database error'}`);
+          if (error) {
+            console.error('Database delete failed:', error);
+            showToast(`Failed to delete AI Agent: ${error.message || 'Database error'}`, 'error');
+            setIsDeleteDialogOpen(false);
+            setDeletingTemplateId(null);
+            return;
+          } else {
+            console.log('Successfully deleted from database');
+          }
+        } catch (error) {
+          console.error('Database delete error:', error);
+          showToast(`Failed to delete AI Agent: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
+          setIsDeleteDialogOpen(false);
+          setDeletingTemplateId(null);
           return;
-        } else {
-          console.log('Successfully deleted from database');
         }
-      } catch (error) {
-        console.error('Database delete error:', error);
-        showToast(`Failed to delete AI Agent: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        return;
       }
+      
+      // Delete from local storage
+      deleteTemplateFromStorage(templateId);
+      
+      // Update state
+      setTemplates(prev => prev.filter(t => t.templateId !== templateId));
+      showToast(`${templateName} deleted successfully!`, 'success');
+      
+      setIsDeleteDialogOpen(false);
+      setDeletingTemplateId(null);
+    } catch (error) {
+      console.error('Error deleting template:', error);
+      showToast(`Failed to delete AI Agent: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
+    } finally {
+      setDeleteLoading(false);
     }
-    
-    // Delete from local storage
-    deleteTemplateFromStorage(templateId);
-    
-    // Update state
-    setTemplates(prev => prev.filter(t => t.templateId !== templateId));
-    showToast('AI Agent deleted successfully!');
   };
 
   const handleSaveFromEditor = async (template: PromptTemplate) => {
@@ -324,6 +337,7 @@ export default function PromptTemplatePage() {
         company_id: resolvedCompanyId,
         name: template.name,
         description: template.description || null,
+        assessment: template.assessment || null,
         prompt_text: JSON.stringify(template.prompt), // Store as JSON string
         category: getCategoryForDb(template.category),
         level: template.experienceLevel,
@@ -517,8 +531,7 @@ export default function PromptTemplatePage() {
                   templates={templates}
                   onView={handleViewTemplate}
                   onEdit={handleEditTemplate}
-                  onDuplicate={handleDuplicateTemplate}
-                  onDelete={handleDeleteTemplate}
+                  onDelete={openDeleteDialog}
                   onCreateAgent={handleCreateNewAgent}
                 />
               </TabsContent>
@@ -572,6 +585,52 @@ export default function PromptTemplatePage() {
           </div>
         </div>
       )}
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <AlertCircle className="h-5 w-5" />
+              Delete AI Agent
+            </DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete this AI Agent? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="flex gap-3 pt-4">
+            <Button 
+              variant="destructive" 
+              onClick={handleDeleteTemplate}
+              disabled={deleteLoading}
+              className="gap-2"
+            >
+              {deleteLoading ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="h-4 w-4" />
+                  Yes, Delete
+                </>
+              )}
+            </Button>
+            <Button 
+              variant="outline" 
+              onClick={() => {
+                setIsDeleteDialogOpen(false);
+                setDeletingTemplateId(null);
+              }}
+              disabled={deleteLoading}
+            >
+              Cancel
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

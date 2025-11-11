@@ -76,6 +76,47 @@ const Sidebar = ({ user, activeModule = 'dashboard', onModuleChange, onCollapseC
 
   const toggleTheme = () => setTheme(prev => (prev === 'dark' ? 'light' : 'dark'));
 
+  // Track viewport size for responsive sidebar behaviour
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleResize = () => {
+      const mobileView = window.innerWidth < 1024;
+      if (mobileView) {
+        setIsCollapsed(true);
+      }
+    };
+
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Keep CSS custom property in sync with sidebar state for layout shift
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const root = document.documentElement;
+    const computeWidth = () => {
+      const mobileView = window.innerWidth < 1024;
+      const width = mobileView
+        ? (isCollapsed ? '0rem' : '16rem')
+        : (isCollapsed ? '4rem' : '16rem');
+      root.style.setProperty('--sidebar-current-width', width);
+    };
+
+    computeWidth();
+    window.addEventListener('resize', computeWidth);
+    return () => {
+      window.removeEventListener('resize', computeWidth);
+    };
+  }, [isCollapsed]);
+
+  // Ensure parent listeners receive collapse state changes (including initial)
+  useEffect(() => {
+    onCollapseChange?.(isCollapsed);
+  }, [isCollapsed, onCollapseChange]);
+
   // Live company name updates via branding events/localStorage
   useEffect(() => {
     const updateName = (e: any) => {
@@ -164,8 +205,10 @@ const Sidebar = ({ user, activeModule = 'dashboard', onModuleChange, onCollapseC
     },
   ];
 
+  const sidebarWidthClass = isCollapsed ? 'w-16' : 'w-64';
+
   return (
-    <div className={`${isCollapsed ? 'w-16' : 'w-64'} bg-card border-r border-border flex flex-col h-screen fixed left-0 top-0 transition-all duration-300 z-50`}>
+    <div className={`${sidebarWidthClass} bg-card border-r border-border flex flex-col h-screen fixed left-0 top-0 transition-all duration-300 ease-in-out z-50`}>
       {/* Logo and Brand */}
       <div className="p-4 border-b">
         <div className="flex items-center justify-between">

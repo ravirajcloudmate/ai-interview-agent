@@ -24,6 +24,9 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
+const BRANDING_NAME_STORAGE_KEY = 'branding_company_name';
+const BRANDING_LOGO_STORAGE_KEY = 'branding_company_logo';
+
 interface CompanyProfileProps {
   user: any;
   globalRefreshKey?: number;
@@ -51,6 +54,47 @@ export function CompanyProfile({ user, globalRefreshKey }: CompanyProfileProps) 
   const [reloadKey, setReloadKey] = useState(0);
   const [editingMember, setEditingMember] = useState<any>(null);
   const [newRole, setNewRole] = useState('');
+
+  const updateBrandingCache = (
+    name?: string | null,
+    logoUrl?: string | null,
+    companyIdOverride?: string | null,
+    emitEvent = true
+  ) => {
+    if (typeof window === 'undefined') return;
+
+    const resolvedName = typeof name === 'string' ? name : companyName;
+    const resolvedLogo = logoUrl !== undefined ? logoUrl : companyLogo;
+    const companyIdValue = companyIdOverride ?? effectiveCompanyId ?? null;
+
+    try {
+      if (resolvedName) {
+        localStorage.setItem(BRANDING_NAME_STORAGE_KEY, resolvedName);
+        localStorage.setItem('companyName', resolvedName);
+      }
+      if (logoUrl !== undefined) {
+        if (resolvedLogo) {
+          localStorage.setItem(BRANDING_LOGO_STORAGE_KEY, resolvedLogo);
+        } else {
+          localStorage.removeItem(BRANDING_LOGO_STORAGE_KEY);
+        }
+      } else if (!localStorage.getItem(BRANDING_LOGO_STORAGE_KEY) && resolvedLogo) {
+        localStorage.setItem(BRANDING_LOGO_STORAGE_KEY, resolvedLogo);
+      }
+    } catch (error) {
+      console.warn('Branding cache update failed:', error);
+    }
+
+    if (emitEvent) {
+      window.dispatchEvent(new CustomEvent('branding:updated', {
+        detail: {
+          companyName: resolvedName,
+          logoUrl: resolvedLogo,
+          companyId: companyIdValue
+        }
+      }));
+    }
+  };
 
   useEffect(() => {
     const loadAllData = async () => {
@@ -133,6 +177,7 @@ export function CompanyProfile({ user, globalRefreshKey }: CompanyProfileProps) 
             
             console.log('Set company name to:', brandingData.company_name);
             console.log('Set industry to:', brandingData.industry);
+            updateBrandingCache(brandingData.company_name || null, brandingData.logo_url || null, cid);
           } else {
             console.log('No branding data found, setting defaults');
             // Set default values if no branding data exists
@@ -143,6 +188,7 @@ export function CompanyProfile({ user, globalRefreshKey }: CompanyProfileProps) 
             setPrimaryColor('#030213');
             setSecondaryColor('#6366F1');
             setBackgroundColor('#F8FAFC');
+            updateBrandingCache(user?.company || null, '/logo.svg', cid);
           }
 
           // Load team members and pending invitations
@@ -162,6 +208,7 @@ export function CompanyProfile({ user, globalRefreshKey }: CompanyProfileProps) 
           // For new users, show empty team (they'll be the first member after save)
           setTeamMembers([]);
           setPendingInvitations([]);
+          updateBrandingCache(user?.company || null, '/logo.svg', null);
         }
       } catch (e: any) {
         console.error('Load data error:', e);
@@ -174,6 +221,7 @@ export function CompanyProfile({ user, globalRefreshKey }: CompanyProfileProps) 
         setPrimaryColor('#030213');
         setSecondaryColor('#6366F1');
         setBackgroundColor('#F8FAFC');
+        updateBrandingCache(user?.company || null, '/logo.svg', null);
       } finally {
         console.log('Data load complete');
       }
@@ -233,10 +281,7 @@ export function CompanyProfile({ user, globalRefreshKey }: CompanyProfileProps) 
               setBackgroundColor(brandingData.background_color || '#F8FAFC');
               
               // Broadcast company name update to other components
-              localStorage.setItem('companyName', brandingData.company_name || '');
-              window.dispatchEvent(new CustomEvent('branding:updated', { 
-                detail: { companyName: brandingData.company_name } 
-              }));
+              updateBrandingCache(brandingData.company_name || null, brandingData.logo_url || null, effectiveCompanyId);
             }
           });
         }
@@ -615,11 +660,7 @@ export function CompanyProfile({ user, globalRefreshKey }: CompanyProfileProps) 
       }
       
       // Broadcast company name update to other components
-      localStorage.setItem('companyName', companyName);
-      localStorage.setItem('branding_company_name', companyName);
-      window.dispatchEvent(new CustomEvent('branding:updated', { 
-        detail: { companyName: companyName, companyId: cid } 
-      }));
+      updateBrandingCache(companyName, companyLogo, cid);
       
       // Trigger global refresh
       window.dispatchEvent(new Event('refresh'));
@@ -681,9 +722,38 @@ export function CompanyProfile({ user, globalRefreshKey }: CompanyProfileProps) 
       
       console.log('Logo uploaded successfully:', json.url);
       setCompanyLogo(json.url);
+
+      if (!effectiveCompanyId) {
+        setSuccess('🎉 Logo uploaded! Save the company first to store it in your account.');
+        setTimeout(() => setSuccess(null), 4000);
+        return;
+      }
+
+      const brandingPayload = {
+        company_id: effectiveCompanyId,
+        company_name: (companyName || '').trim() || null,
+        industry: (industry || '').trim() || null,
+        logo_url: json.url,
+        welcome_message: welcomeMessage || null,
+        primary_color: primaryColor,
+        secondary_color: secondaryColor,
+        background_color: backgroundColor
+      };
+
+      const { error: brandingSaveError } = await supabase
+        .from('company_branding')
+        .upsert(brandingPayload, { onConflict: 'company_id' });
+
+      if (brandingSaveError) {
+        console.error('Failed to persist logo in company_branding:', brandingSaveError);
+        setError(`❌ Logo uploaded but could not be saved to database: ${brandingSaveError.message}`);
+        setTimeout(() => setError(null), 5000);
+        return;
+      }
       
-      // Logo uploaded locally - user needs to click Save to persist to database
-      setSuccess('🎉 Logo uploaded! Click "Save Changes" to save to database.');
+      updateBrandingCache(companyName, json.url, effectiveCompanyId);
+
+      setSuccess('🎉 Logo uploaded and saved to your company profile!');
       setTimeout(() => setSuccess(null), 4000);
       
     } catch (e: any) {

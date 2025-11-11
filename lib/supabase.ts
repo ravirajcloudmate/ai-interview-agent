@@ -349,3 +349,45 @@ export interface AnalyticsEvent {
   user_agent?: string
   created_at: string
 }
+
+// Interview Management Types
+export interface InterviewInvitation {
+  id: string;
+  company_id: string;
+  company_branding_id?: string;
+  job_id: string;
+  created_by: string;
+  candidate_email: string;
+  candidate_name?: string;
+  candidate_skills?: string;
+  experience?: string;
+  interview_date?: string;
+  interview_time?: string;
+  candidate_projects?: string;
+  interview_link: string;
+  status: string;
+  expires_at: string;
+  created_at: string;
+}
+
+export interface InterviewSession {
+  id: string;
+  invitation_id: string;
+  room_id: string;
+  session_token: string;
+  status: string;
+  started_at?: string;
+  ended_at?: string;
+  duration_seconds?: number;
+}
+
+export interface JobPosting {
+  id: string;
+  company_id: string;
+  job_title: string;
+  department: string;
+  ai_interview_template: string;
+  interview_mode: string;
+  difficulty_level: string;
+  status: string;
+}

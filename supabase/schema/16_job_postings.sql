@@ -16,7 +16,7 @@ CREATE TABLE job_postings (
     job_description TEXT NOT NULL,
     
     -- AI Interview Configuration
-    ai_interview_template TEXT NOT NULL,
+    ai_interview_template UUID REFERENCES prompt_templates(id) ON DELETE RESTRICT,
     interview_mode VARCHAR(50) NOT NULL DEFAULT 'video' CHECK (interview_mode IN ('video', 'audio', 'text')),
     interview_language VARCHAR(10) NOT NULL DEFAULT 'en' CHECK (interview_language IN ('en', 'es', 'fr', 'de', 'hi', 'zh')),
     
@@ -65,6 +65,7 @@ CREATE INDEX idx_job_postings_status ON job_postings(status);
 CREATE INDEX idx_job_postings_created_by ON job_postings(created_by);
 CREATE INDEX idx_job_postings_department ON job_postings(department);
 CREATE INDEX idx_job_postings_created_at ON job_postings(created_at);
+CREATE INDEX idx_job_postings_ai_interview_template ON job_postings(ai_interview_template);
 
 -- RPC function to create a new job posting
 CREATE OR REPLACE FUNCTION create_job_posting(
@@ -73,7 +74,7 @@ CREATE OR REPLACE FUNCTION create_job_posting(
     p_job_title VARCHAR(255),
     p_department VARCHAR(255),
     p_job_description TEXT,
-    p_ai_interview_template TEXT,
+    p_ai_interview_template UUID,
     p_interview_mode VARCHAR(50) DEFAULT 'video',
     p_interview_language VARCHAR(10) DEFAULT 'en',
     p_employment_type VARCHAR(50) DEFAULT 'full-time',
@@ -159,23 +160,26 @@ CREATE OR REPLACE FUNCTION update_job_posting(
 RETURNS BOOLEAN AS $$
 BEGIN
     UPDATE job_postings SET
-        job_title = COALESCE(p_job_title, job_title),
-        department = COALESCE(p_department, department),
-        job_description = COALESCE(p_job_description, job_description),
-        ai_interview_template = COALESCE(p_ai_interview_template, ai_interview_template),
-        interview_mode = COALESCE(p_interview_mode, interview_mode),
-        interview_language = COALESCE(p_interview_language, interview_language),
-        employment_type = COALESCE(p_employment_type, employment_type),
-        experience_level = COALESCE(p_experience_level, experience_level),
-        location = COALESCE(p_location, location),
+        job_title = COALESCE(NULLIF(p_job_title, ''), job_title),
+        department = COALESCE(NULLIF(p_department, ''), department),
+        job_description = COALESCE(NULLIF(p_job_description, ''), job_description),
+        ai_interview_template = CASE 
+            WHEN p_ai_interview_template IS NULL OR p_ai_interview_template = '' THEN ai_interview_template
+            ELSE p_ai_interview_template::uuid
+        END,
+        interview_mode = COALESCE(NULLIF(p_interview_mode, ''), interview_mode),
+        interview_language = COALESCE(NULLIF(p_interview_language, ''), interview_language),
+        employment_type = COALESCE(NULLIF(p_employment_type, ''), employment_type),
+        experience_level = COALESCE(NULLIF(p_experience_level, ''), experience_level),
+        location = COALESCE(NULLIF(p_location, ''), location),
         salary_min = COALESCE(p_salary_min, salary_min),
         salary_max = COALESCE(p_salary_max, salary_max),
-        currency = COALESCE(p_currency, currency),
+        currency = COALESCE(NULLIF(p_currency, ''), currency),
         is_remote = COALESCE(p_is_remote, is_remote),
-        status = COALESCE(p_status, status),
+        status = COALESCE(NULLIF(p_status, ''), status),
         interview_duration = COALESCE(p_interview_duration, interview_duration),
         questions_count = COALESCE(p_questions_count, questions_count),
-        difficulty_level = COALESCE(p_difficulty_level, difficulty_level),
+        difficulty_level = COALESCE(NULLIF(p_difficulty_level, ''), difficulty_level),
         published_at = CASE WHEN p_status = 'active' AND published_at IS NULL THEN NOW() ELSE published_at END
     WHERE id = p_job_id;
     

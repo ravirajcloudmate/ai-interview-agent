@@ -11,8 +11,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Progress } from '@/components/ui/progress';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { 
-  Plus, 
   Search, 
   Filter, 
   Link2, 
@@ -35,7 +35,9 @@ import {
   FileText,
   Sparkles,
   Save,
-  Trash2
+  Trash2,
+  UserPlus,
+  TvMinimalPlay
 } from 'lucide-react';
 import { Notification } from './Notification';
 
@@ -76,10 +78,14 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
   const [isUploadingPdf, setIsUploadingPdf] = useState(false);
   const [generatedSummary, setGeneratedSummary] = useState<string>('');
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [resumeAnalysis, setResumeAnalysis] = useState<any>(null);
 
   // View-only dialog state
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [viewRecord, setViewRecord] = useState<any | null>(null);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [isDeletingInvitation, setIsDeletingInvitation] = useState(false);
 
   // OpenAI API key
   const OPENAI_API_KEY = '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';
@@ -119,6 +125,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
 
         const pdfData = await pdfResponse.json();
         analysis = pdfData.analysis; // Extract the analysis from the response
+        setResumeAnalysis(analysis); // Store for later use
         console.log('PDF analysis successful:', analysis);
         
         // Validate that we got meaningful analysis
@@ -184,22 +191,130 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
     }
   };
 
-  // Delete interview/invitation (removes from DB and refreshes list)
-  const handleDeleteInterview = async (invitationId: string) => {
+  // Send candidate details to backend agent
+  const sendCandidateDetailsToBackend = async (
+    roomId: string,
+    invitationData: any,
+    jobData: any,
+    agentData: any,
+    generatedSummary: string,
+    resumeAnalysis: any
+  ) => {
     try {
-      setError('');
-      // Try RPC first
-      try {
-        await supabase.rpc('delete_interview_invitation', { p_invitation_id: invitationId });
-      } catch (_) {
-        // Fallback: direct delete
-        await supabase.from('interview_invitations').delete().eq('id', invitationId);
+      console.log('📤 Sending candidate details to backend...');
+      
+      const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001';
+      
+      const response = await fetch(`${BACKEND_URL}/agent/candidate-details`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          // 👇 these key names must match backend expectations
+          roomName: roomId,
+          candidateName: invitationData.candidate_name || invitationData.candidate_email.split('@')[0],
+          candidateEmail: invitationData.candidate_email,
+          candidateSkills: invitationData.candidate_skills || '',
+          experience: invitationData.experience || '',
+          candidateProjects: invitationData.candidate_projects || '',
+          candidateSummary: generatedSummary || '',
+          resumeAnalysis: resumeAnalysis || null,
+          jobId: invitationData.job_id,
+          jobTitle: jobData.job_title,
+          jobDepartment: jobData.department,
+          interviewDate: invitationData.interview_date || '',
+          interviewTime: invitationData.interview_time || '',
+          
+          // 👇 most important key — backend will read this
+          agentPrompt: agentData?.prompt_text || jobData.ai_interview_template_prompt || '',
+
+          interviewMode: jobData.interview_mode || 'Standard',
+          difficultyLevel: jobData.difficulty_level || 'Medium',
+        }),
+      });
+
+      if (response.ok) {
+        console.log('✅ Candidate details sent successfully');
+        return true;
+      } else {
+        const errorText = await response.text().catch(() => 'Unknown error');
+        console.error('❌ Failed to send candidate details:', response.status, errorText);
+        return false;
       }
+    } catch (error: any) {
+      console.error('❌ Error sending candidate details:', error);
+      return false;
+    }
+  };
+
+  // Get LiveKit token for candidate
+  const getLivekitToken = async (roomId: string, candidateIdentity: string) => {
+    try {
+      console.log('🎫 Getting LiveKit token...', { roomId, candidateIdentity });
+      
+      const response = await fetch('/api/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          room: roomId,
+          identity: candidateIdentity,
+          metadata: 'interview'
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error('❌ Failed to get LiveKit token:', response.status, errorData);
+        return null;
+      }
+
+      const tokenData = await response.json();
+      console.log('✅ LiveKit token generated successfully');
+      return tokenData;
+    } catch (error: any) {
+      console.error('❌ Error getting LiveKit token:', error);
+      return null;
+    }
+  };
+
+  // Delete interview/invitation (removes from DB and refreshes list)
+  const openDeleteInvitationDialog = (invitationId: string, candidateName: string) => {
+    setError('');
+    setDeleteTarget({
+      id: invitationId,
+      name: candidateName
+    });
+    setIsDeleteDialogOpen(true);
+  };
+
+  const handleDeleteInterview = async () => {
+    if (!deleteTarget?.id) return;
+
+    try {
+      setIsDeletingInvitation(true);
+      setError('');
+
+      const response = await fetch(`/api/interview-invitations/${deleteTarget.id}`, {
+        method: 'DELETE'
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const errorMessage =
+          errorData?.error ||
+          errorData?.details ||
+          'Failed to delete invitation. Please try again.';
+        throw new Error(errorMessage);
+      }
+
       await loadInterviews();
       showNotification('success', 'Deleted', 'Invitation deleted successfully.');
     } catch (e) {
       console.error('Failed to delete interview:', e);
       setError('Failed to delete invitation');
+    } finally {
+      setIsDeletingInvitation(false);
+      setIsDeleteDialogOpen(false);
+      setDeleteTarget(null);
     }
   };
 
@@ -221,12 +336,28 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
       }
 
       // Fetch summary if present
-      const { data: summaryRow } = await supabase
+      let summaryRow = null;
+      const { data: summaryByInvitation } = await supabase
         .from('candidate_summaries')
         .select('*')
         .eq('invitation_id', invitationId)
         .limit(1)
         .maybeSingle();
+
+      if (summaryByInvitation) {
+        summaryRow = summaryByInvitation;
+      } else if (inv?.candidate_email) {
+        const { data: summaryByEmail } = await supabase
+          .from('candidate_summaries')
+          .select('*')
+          .eq('candidate_email', inv.candidate_email)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (summaryByEmail) {
+          summaryRow = summaryByEmail;
+        }
+      }
 
       setViewRecord({ invitation: inv, summary: summaryRow });
       setIsViewDialogOpen(true);
@@ -249,28 +380,70 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
   };
 
   // Save candidate summary to database
-  const saveCandidateSummary = async (formData: any, summary: string) => {
+  const saveCandidateSummary = async (formData: any, summary: string, invitationId?: string | null) => {
     try {
       console.log('💾 Attempting to save candidate summary...');
       
-      // Try to save to candidate_summaries table
-      const { error } = await supabase
-        .from('candidate_summaries')
-        .insert([
-          {
-            candidate_name: formData.candidate_name,
-            candidate_email: formData.candidate_email,
-            job_id: formData.job_id || null,
-            skills: formData.candidate_skills || null,
-            experience: formData.experience || null,
-            projects: formData.candidate_projects || null,
-            interview_date: formData.interview_date || null,
-            interview_time: formData.interview_time || null,
-            summary: summary,
-            created_by: user.id,
-            company_id: companyIdState || null
-          }
-        ]);
+      const summaryRecord = {
+        candidate_name: formData.candidate_name || null,
+        candidate_email: formData.candidate_email,
+        job_id: formData.job_id || null,
+        skills: formData.candidate_skills || null,
+        experience: formData.experience || null,
+        projects: formData.candidate_projects || null,
+        interview_date: formData.interview_date || null,
+        interview_time: formData.interview_time || null,
+        summary: summary,
+        created_by: user.id,
+        company_id: companyIdState || null,
+        invitation_id: invitationId || null
+      };
+
+      let targetSummaryId: string | null = null;
+
+      // Try to find an existing summary to update (priority: invitation_id > email)
+      if (invitationId) {
+        const { data: existingByInvitation } = await supabase
+          .from('candidate_summaries')
+          .select('id')
+          .eq('invitation_id', invitationId)
+          .maybeSingle();
+        if (existingByInvitation?.id) {
+          targetSummaryId = existingByInvitation.id;
+        }
+      }
+
+      if (!targetSummaryId) {
+        let query = supabase
+          .from('candidate_summaries')
+          .select('id')
+          .eq('candidate_email', formData.candidate_email)
+          .order('created_at', { ascending: false })
+          .limit(1);
+
+        if (!invitationId) {
+          query = query.is('invitation_id', null);
+        }
+
+        const { data: existingByEmail } = await query.maybeSingle();
+        if (existingByEmail?.id) {
+          targetSummaryId = existingByEmail.id;
+        }
+      }
+
+      let error;
+      if (targetSummaryId) {
+        const { error: updateError } = await supabase
+          .from('candidate_summaries')
+          .update(summaryRecord)
+          .eq('id', targetSummaryId);
+        error = updateError;
+      } else {
+        const { error: insertError } = await supabase
+          .from('candidate_summaries')
+          .insert([summaryRecord]);
+        error = insertError;
+      }
 
       if (error) {
         // Check if table doesn't exist (PGRST205 error code)
@@ -288,9 +461,64 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
       
       console.log('✅ Candidate summary saved to database');
       showNotification('success', 'Summary generated and saved!', '');
+
+      if (invitationId) {
+        await supabase
+          .from('interview_invitations')
+          .update({ summary })
+          .eq('id', invitationId);
+      }
     } catch (error) {
       console.error('❌ Error saving summary:', error);
       // Don't propagate error - summary was still generated successfully
+    }
+  };
+
+  const linkCandidateSummaryToInvitation = async (
+    invitationId: string,
+    formData: any,
+    summary?: string | null
+  ) => {
+    if (!invitationId || !formData?.candidate_email) return;
+    try {
+      const { data: existingSummary } = await supabase
+        .from('candidate_summaries')
+        .select('id')
+        .eq('candidate_email', formData.candidate_email)
+        .is('invitation_id', null)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (existingSummary?.id) {
+        await supabase
+          .from('candidate_summaries')
+          .update({
+            invitation_id: invitationId,
+            job_id: formData.job_id || null,
+            candidate_name: formData.candidate_name || null,
+            summary: summary || generatedSummary || null,
+            skills: formData.candidate_skills || null,
+            experience: formData.experience || null,
+            projects: formData.candidate_projects || null,
+            interview_date: formData.interview_date || null,
+            interview_time: formData.interview_time || null,
+            company_id: companyIdState || null,
+            created_by: user.id
+          })
+          .eq('id', existingSummary.id);
+
+        if (summary || generatedSummary) {
+          await supabase
+            .from('interview_invitations')
+            .update({ summary: summary || generatedSummary || null })
+            .eq('id', invitationId);
+        }
+      } else if (summary || generatedSummary) {
+        await saveCandidateSummary(formData, summary || generatedSummary, invitationId);
+      }
+    } catch (err) {
+      console.warn('⚠️ Failed to link summary to invitation:', err);
     }
   };
 
@@ -473,6 +701,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
           
           return {
             id: inv.id,
+            companyBrandingId: inv.company_branding_id || null,
             candidateName: inv.candidate_name || inv.candidate_email.split('@')[0],
             email: inv.candidate_email,
             jobTitle: inv.job_postings?.job_title || 'Position',
@@ -623,8 +852,9 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
     }
   };
 
-  const openInterviewLink = (sessionId: string) => {
-    const interviewUrl = `/interview-link?session=${sessionId}`;
+  const openInterviewLink = (roomId: string) => {
+    // Use room_id instead of session_id
+    const interviewUrl = `/interview-room/${roomId}`;
     window.open(interviewUrl, '_blank');
   };
 
@@ -636,7 +866,10 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
   };
 
   const handleInviteCandidate = async () => {
-    if (!user?.id) return;
+    if (!user?.id) {
+      setError('User not authenticated');
+      return;
+    }
 
     try {
       setInviteLoading(true);
@@ -644,7 +877,8 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
 
       // Validate form
       if (!inviteForm.candidate_email || !inviteForm.job_id) {
-        setError('Please fill in all required fields');
+        setError('Please fill in all required fields (Email and Job Posting)');
+        setInviteLoading(false);
         return;
       }
 
@@ -656,7 +890,8 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
         .single();
 
       if (!userData?.company_id) {
-        setError('User not linked to company');
+        setError('User not linked to company. Please contact administrator.');
+        setInviteLoading(false);
         return;
       }
 
@@ -668,24 +903,57 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
         .single();
 
       if (!jobData) {
-        setError('Job not found');
+        setError('Job posting not found. Please select a valid job.');
+        setInviteLoading(false);
         return;
       }
 
-      // Get agent prompt template
-      const { data: agentData } = await supabase
-        .from('prompt_templates')
-        .select('*')
-        .eq('id', jobData.ai_interview_template)
-        .single();
+      // Get agent prompt template - MUST be UUID to properly link
+      let agentData = null;
+      let agentId: string | null = null;
+      let agentPromptText = 'Conduct a professional interview for the position.';
+
+      // Check if ai_interview_template is a valid UUID
+      const templateIdValue = jobData.ai_interview_template?.trim();
+      const isUUID = templateIdValue && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(templateIdValue);
+
+      if (isUUID) {
+        // Valid UUID - query prompt_templates
+        const { data: templateData } = await supabase
+          .from('prompt_templates')
+          .select('*')
+          .eq('id', templateIdValue)
+          .maybeSingle();
+        
+        if (templateData) {
+          agentData = templateData;
+          agentId = templateData.id;  // UUID from database
+          agentPromptText = templateData.prompt_text || agentPromptText;
+          console.log('✅ Found template in database:', agentId);
+        } else {
+          console.error('⚠️ Template not found in database:', templateIdValue);
+          setError(`Selected AI interview template (${templateIdValue}) not found. Please update the job posting with a valid template.`);
+          setInviteLoading(false);
+          return;
+        }
+      } else {
+        // Not a UUID - this is a problem
+        console.error('❌ Invalid template ID format:', templateIdValue);
+        setError(`Invalid template ID format. The job posting references "${templateIdValue}" which is not a valid template UUID. Please update the job posting to use a saved template from the database.`);
+        setInviteLoading(false);
+        return;
+      }
 
       console.log('📋 Job Data:', jobData);
       console.log('🤖 Agent Data:', agentData);
+      console.log('🔗 Agent ID (UUID):', agentId);
 
       // Generate unique room ID for LiveKit
       const roomId = `room_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const sessionToken = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       
       console.log('🏠 Generated Room ID:', roomId);
+      console.log('🎫 Generated Session Token:', sessionToken);
 
       // Create interview invitation in database
       const { data: invitationData, error: inviteError } = await supabase
@@ -699,16 +967,47 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
         });
 
       if (inviteError) {
-        console.error('Error creating invitation:', inviteError);
-        setError('Failed to create interview invitation');
+        console.error('❌ Error creating invitation:', inviteError);
+        setError('Failed to create interview invitation: ' + (inviteError.message || 'Unknown error'));
+        setInviteLoading(false);
         return;
       }
 
       console.log('✅ Invitation created:', invitationData);
+      console.log('📋 Invitation data type:', typeof invitationData);
+      console.log('📋 Invitation data structure:', JSON.stringify(invitationData, null, 2));
 
-      // Update extra optional fields captured in the form
-      const createdInvitationId = invitationData[0]?.id || invitationData;
-      await supabase
+      // Get invitation ID - RPC returns array with {invitation_id, interview_link, interview_token}
+      let invitationId;
+      if (Array.isArray(invitationData) && invitationData.length > 0) {
+        // RPC function returns array with invitation_id property
+        invitationId = invitationData[0].invitation_id;
+      } else if (invitationData && typeof invitationData === 'object' && invitationData.invitation_id) {
+        // Handle single object response
+        invitationId = invitationData.invitation_id;
+      } else if (invitationData && typeof invitationData === 'object' && invitationData.id) {
+        // Fallback for direct id property
+        invitationId = invitationData.id;
+      } else {
+        // Last resort fallback
+        invitationId = invitationData;
+      }
+
+      console.log('🆔 Extracted invitation ID:', invitationId);
+
+      if (!invitationId) {
+        console.error('❌ No invitation ID found in response:', invitationData);
+        setError('Failed to create invitation. Please try again.');
+        setInviteLoading(false);
+        return;
+      }
+
+      if (generatedSummary) {
+        await linkCandidateSummaryToInvitation(invitationId, inviteForm, generatedSummary);
+      }
+
+      // Update extra optional fields
+      const { error: updateError } = await supabase
         .from('interview_invitations')
         .update({
           candidate_skills: inviteForm.candidate_skills || null,
@@ -717,90 +1016,158 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
           interview_time: inviteForm.interview_time || null,
           candidate_projects: inviteForm.candidate_projects || null
         })
-        .eq('id', createdInvitationId);
+        .eq('id', invitationId);
 
-      // Create interview session with LiveKit room
+      if (updateError) {
+        console.warn('⚠️ Failed to update extra fields:', updateError);
+      }
+
+      // Prepare session data
       const sessionData = {
-        invitation_id: createdInvitationId,
+        invitation_id: invitationId,
         job_id: inviteForm.job_id,
-        agent_id: agentData?.id || jobData.ai_interview_template,
+        agent_id: agentData?.id || jobData.ai_interview_template || 'default-agent',
         agent_prompt: agentData?.prompt_text || 'Conduct a professional interview for the position.',
         candidate_email: inviteForm.candidate_email,
         candidate_name: inviteForm.candidate_name || inviteForm.candidate_email.split('@')[0],
         room_id: roomId,
-        session_token: `session_${Date.now()}`,
+        session_token: sessionToken,
         status: 'waiting',
         video_enabled: true,
         audio_enabled: true
       };
 
-      // Save session to database
-      const { data: session, error: sessionError } = await supabase
-        .from('interview_sessions')
-        .insert([sessionData])
-        .select()
-        .single();
+      console.log('📝 Attempting to insert session:', sessionData);
 
-      if (sessionError) {
-        console.error('⚠️ Session creation error (may not be critical):', sessionError);
-        // Continue anyway - table might not exist yet
+      // Try to create session - but don't fail if table doesn't exist
+      let sessionId = sessionToken; // Fallback to token if insert fails
+      
+      try {
+        const { data: session, error: sessionError } = await supabase
+          .from('interview_sessions')
+          .insert([sessionData])
+          .select()
+          .single();
+
+        if (sessionError) {
+          // Log detailed error
+          console.error('⚠️ Session creation error:', sessionError);
+          console.error('⚠️ Session error details:', {
+            message: sessionError.message,
+            details: sessionError.details,
+            hint: sessionError.hint,
+            code: sessionError.code,
+          });
+
+          // Check if table doesn't exist
+          if (sessionError.code === '42P01' || sessionError.message?.includes('does not exist')) {
+            console.warn('⚠️ interview_sessions table does not exist. Creating link without session record.');
+            showNotification(
+              'error',
+              'Warning',
+              'Interview sessions table not found. Please create the table in Supabase.'
+            );
+          } else {
+            throw sessionError;
+          }
+        } else {
+          sessionId = session?.id || sessionToken;
+          console.log('✅ Session created with ID:', sessionId);
+        }
+      } catch (sessionErr: any) {
+        console.error('❌ Session insert failed:', sessionErr);
+        console.error('❌ Session error details:', {
+          message: sessionErr.message,
+          details: sessionErr.details,
+          hint: sessionErr.hint,
+          code: sessionErr.code,
+        });
+        // Continue anyway - we can still send invitation
       }
 
-      console.log('✅ Session created:', session);
+      // Send candidate details to backend agent
+      const candidateDetailsSent = await sendCandidateDetailsToBackend(roomId, inviteForm, jobData, agentData, generatedSummary, resumeAnalysis);
+      
+      // Get LiveKit token only after candidate details are successfully sent to backend
+      if (candidateDetailsSent) {
+        const candidateIdentity = `candidate-${inviteForm.candidate_email.split('@')[0]}-${Date.now()}`;
+        const tokenData = await getLivekitToken(roomId, candidateIdentity);
+        
+        if (!tokenData) {
+          console.warn('⚠️ Failed to get LiveKit token, but continuing with invitation creation');
+        } else {
+          console.log('✅ LiveKit token obtained successfully');
+        }
+      } else {
+        console.warn('⚠️ Candidate details not sent to backend, skipping LiveKit token generation');
+      }
 
-      // Create LiveKit room and get token
-      const sessionId = session?.id || sessionData.session_token;
-      const interviewLink = `${window.location.origin}/interview/${sessionId}?room=${roomId}`;
-
+      // Generate interview link
+      const interviewLink = `${window.location.origin}/interview-room/${roomId}`;
       console.log('🔗 Interview Link:', interviewLink);
 
-      // Update invitation with the new interview link
-      await supabase
+      // Update invitation with interview link
+      const { error: linkUpdateError } = await supabase
         .from('interview_invitations')
         .update({
           interview_link: interviewLink
         })
-        .eq('id', createdInvitationId);
+        .eq('id', invitationId);
+
+      if (linkUpdateError) {
+        console.warn('⚠️ Failed to update interview link:', linkUpdateError);
+      }
 
       // Send email invitation
-      const emailResponse = await fetch('/api/send-interview-invitation', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: inviteForm.candidate_email,
-          candidateName: inviteForm.candidate_name || inviteForm.candidate_email.split('@')[0],
-          interviewLink: interviewLink,
-          jobTitle: jobData.job_title,
-          companyName: user.company || 'Company'
-        })
-      });
+      let emailSent = false;
+      try {
+        console.log('📧 Attempting to send invitation email...');
+        const emailResponse = await fetch('/api/send-interview-invitation', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: inviteForm.candidate_email,
+            candidateName: inviteForm.candidate_name || inviteForm.candidate_email.split('@')[0],
+            interviewLink: interviewLink,
+            jobTitle: jobData.job_title,
+            companyName: user.company || 'Company'
+          })
+        });
 
-      if (!emailResponse.ok) {
-        const errorData = await emailResponse.json().catch(() => ({}));
-        console.error('Email sending failed:', errorData);
-        
-        // Show warning but don't fail the entire process
-        showNotification(
-          'success',
-          'Interview invitation created',
-          `${inviteForm.candidate_name || inviteForm.candidate_email} has been invited for ${jobData.job_title} position. Email sending failed - please share the link manually.`
-        );
-        
-        // Copy link to clipboard for manual sharing
-        try {
-          await navigator.clipboard.writeText(interviewLink);
-          console.log('Interview link copied to clipboard for manual sharing:', interviewLink);
-        } catch (clipboardError) {
-          console.error('Failed to copy link to clipboard:', clipboardError);
+        if (emailResponse.ok) {
+          emailSent = true;
+          console.log('✅ Interview invitation email sent successfully');
+        } else {
+          const errorData = await emailResponse.json().catch(() => ({}));
+          console.error('❌ Email sending failed:', errorData);
         }
-      } else {
-        console.log('✅ Interview invitation sent successfully');
-        
+      } catch (emailError) {
+        console.error('❌ Email error:', emailError);
+      }
+
+      // Show success notification
+      if (emailSent) {
         showNotification(
           'success',
           'Interview invitation sent',
           `${inviteForm.candidate_name || inviteForm.candidate_email} has been invited for ${jobData.job_title} position.`
         );
+      } else {
+        // Copy link to clipboard as fallback
+        try {
+          await navigator.clipboard.writeText(interviewLink);
+          showNotification(
+            'success',
+            'Invitation created',
+            `Invitation created! Link copied to clipboard. Please share with ${inviteForm.candidate_name || inviteForm.candidate_email}.`
+          );
+        } catch {
+          showNotification(
+            'success',
+            'Invitation created',
+            `Invitation created successfully! Interview link: ${interviewLink.substring(0, 50)}...`
+          );
+        }
       }
 
       // Reset form and close dialog
@@ -817,13 +1184,18 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
       });
       setUploadedFile(null);
       setGeneratedSummary('');
+      setResumeAnalysis(null);
       setIsSideDrawerOpen(false);
+      
+      // Reload interviews
       await loadInterviews();
 
-    } catch (err) {
-      console.error('Error inviting candidate:', err);
-      setError('Failed to invite candidate');
-    } finally {
+      // Reset loading state
+      setInviteLoading(false);
+
+    } catch (err: any) {
+      console.error('❌ Error inviting candidate:', err);
+      setError('Failed to invite candidate: ' + (err.message || 'Unknown error'));
       setInviteLoading(false);
     }
   };
@@ -915,9 +1287,9 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
           className="gap-2 bg-[#e30d0d] hover:bg-[#c50c0c] text-white"
           onClick={() => setIsSideDrawerOpen(true)}
         >
-              <Plus className="h-4 w-4" />
-              Invite Candidate
-            </Button>
+          <UserPlus className="h-4 w-4" />
+          Invite Candidate
+        </Button>
       </div>
 
       {/* Search and Filters */}
@@ -970,16 +1342,16 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
                 </p>
                 {interviews.length === 0 && (
                   <Button onClick={() => setIsSideDrawerOpen(true)} className="gap-2 bg-[#e30d0d] hover:bg-[#c50c0c] text-white">
-                    <Plus className="h-4 w-4" />
+                    <UserPlus className="h-4 w-4" />
                     Invite Your First Candidate
                   </Button>
                 )}
               </CardContent>
             </Card>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {filteredInterviews.map((interview) => (
-                <Card key={interview.id} className="p-4">
+                <Card key={interview.id} className="p-6">
                   <div className="flex items-start justify-between">
                     <div className="flex items-start gap-3">
                       <Avatar className="h-10 w-10">
@@ -1016,15 +1388,21 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
                   {/* Footer actions */}
                   <div className="mt-3 flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      {interview.sessionId && (
+                      {(interview.roomId || interview.link) && (
                         <Button 
                           size="sm" 
                           variant="default"
                           className="h-7 px-2 bg-green-600 hover:bg-green-700 text-white text-[11px]"
-                          onClick={() => openInterviewLink(interview.sessionId)}
+                          onClick={() => {
+                            if (interview.roomId) {
+                              window.open(`/interview-room/${interview.roomId}`, '_blank');
+                            } else if (interview.link) {
+                              window.open(interview.link, '_blank');
+                            }
+                          }}
                           title="Join interview"
                         >
-                          <Play className="h-3 w-3" />
+                          <TvMinimalPlay className="h-3 w-3" />
                           Join Interview
                         </Button>
                       )}
@@ -1068,7 +1446,12 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
                           variant="ghost"
                           className="h-7 w-7 text-red-600 hover:text-red-700"
                           title="Delete Invitation"
-                          onClick={() => handleDeleteInterview(interview.invitation_id || interview.id)}
+                          onClick={() =>
+                            openDeleteInvitationDialog(
+                              interview.invitation_id || interview.id,
+                              interview.candidateName
+                            )
+                          }
                         >
                           <Trash2 className="h-3 w-3" />
                         </Button>
@@ -1454,12 +1837,13 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
 
         {/* View-only dialog */}
         <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
-          <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl overflow-hidden">
             <DialogHeader>
               <DialogTitle>Invitation Details</DialogTitle>
               <DialogDescription>Read-only view of candidate and summary</DialogDescription>
             </DialogHeader>
-            {viewRecord && (
+          {viewRecord && (
+            <ScrollArea className="max-h-[70vh] pr-4">
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
@@ -1468,7 +1852,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
                   </div>
                   <div>
                     <div className="text-muted-foreground">Candidate Email</div>
-                    <div className="font-medium">{viewRecord.invitation.candidate_email}</div>
+                    <div className="font-medium break-words">{viewRecord.invitation.candidate_email}</div>
                   </div>
                   <div>
                     <div className="text-muted-foreground">Interview Date</div>
@@ -1480,7 +1864,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
                   </div>
                   <div className="col-span-2">
                     <div className="text-muted-foreground">Skills</div>
-                    <div className="font-medium">{viewRecord.invitation.candidate_skills || '—'}</div>
+                    <div className="font-medium whitespace-pre-wrap break-words">{viewRecord.invitation.candidate_skills || '—'}</div>
                   </div>
                   <div className="col-span-2">
                     <div className="text-muted-foreground">Experience</div>
@@ -1496,12 +1880,16 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
                 <div className="border-t pt-3">
                   <div className="flex items-center justify-between mb-2">
                     <h4 className="font-semibold">Generated Summary</h4>
-                    {viewRecord.summary?.created_at && (
+                    {viewRecord.summary?.created_at ? (
                       <span className="text-xs text-muted-foreground">Saved {formatDate(viewRecord.summary.created_at)}</span>
+                    ) : (
+                      viewRecord.invitation.summary && (
+                        <span className="text-xs text-muted-foreground">Saved in invitation</span>
+                      )
                     )}
                   </div>
                   <div className="text-sm whitespace-pre-wrap bg-muted/30 rounded-md p-3">
-                    {viewRecord.summary?.summary || 'No summary saved'}
+                    {viewRecord.summary?.summary || viewRecord.invitation.summary || 'No summary saved'}
                   </div>
                 </div>
 
@@ -1510,9 +1898,64 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
                   PDF uploaded at invite time is used for this summary (stored as text extraction). Original file storage is not retained in DB.
                 </div>
               </div>
-            )}
+            </ScrollArea>
+          )}
           </DialogContent>
         </Dialog>
+      {/* Delete confirmation dialog */}
+      <Dialog
+        open={isDeleteDialogOpen}
+        onOpenChange={(open) => {
+          setIsDeleteDialogOpen(open);
+          if (!open) {
+            setDeleteTarget(null);
+          }
+        }}
+      >
+            <DialogContent className="max-w-md max-h-[70vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <AlertCircle className="h-5 w-5" />
+              Delete Invitation
+            </DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete the invitation for{' '}
+              <span className="font-semibold">{deleteTarget?.name || 'this candidate'}</span>? This
+              action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex gap-3 pt-4">
+            <Button
+              variant="destructive"
+              onClick={handleDeleteInterview}
+              disabled={isDeletingInvitation}
+              className="gap-2"
+            >
+              {isDeletingInvitation ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="h-4 w-4" />
+                  Yes, Delete
+                </>
+              )}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsDeleteDialogOpen(false);
+                setDeleteTarget(null);
+              }}
+              disabled={isDeletingInvitation}
+            >
+              Cancel
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
       {/* Notification */}
       <Notification
         type={notification.type}

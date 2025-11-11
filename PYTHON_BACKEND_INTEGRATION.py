@@ -21,6 +21,51 @@ class InterviewRequest(BaseModel):
     livekitApiKey: str
     livekitApiSecret: str
 
+class AgentJoinRequest(BaseModel):
+    # Room & Session Info
+    roomName: str
+    sessionId: str = None
+    
+    # Candidate Details
+    candidateId: str
+    candidateName: str = "Candidate"
+    candidateEmail: str = ""
+    candidateSkills: str = ""
+    candidateExperience: str = ""
+    candidateProjects: str = ""
+    
+    # Job Details
+    jobId: str
+    jobTitle: str = ""
+    jobDepartment: str = ""
+    jobDescription: str = ""
+    employmentType: str = ""
+    experienceLevel: str = ""
+    location: str = ""
+    salaryMin: int = None
+    salaryMax: int = None
+    currency: str = "USD"
+    isRemote: bool = False
+    
+    # Interview Settings
+    interviewMode: str = "video"
+    interviewLanguage: str = "en"
+    interviewDuration: int = 30
+    questionsCount: int = 5
+    difficultyLevel: str = "medium"
+    interviewDate: str = None
+    interviewTime: str = None
+    
+    # Agent/Prompt Template Details
+    agentId: str = None
+    agentPrompt: dict = {}
+    promptTemplateName: str = ""
+    promptTemplateDescription: str = ""
+    promptTemplateCategory: str = "technical"
+    promptTemplateLevel: str = "mid"
+    promptTemplateDuration: int = 45
+    promptText: dict = {}
+
 # FastAPI App
 app = FastAPI(title="AI Interview Agent Backend")
 
@@ -35,6 +80,65 @@ app.add_middleware(
 
 # Global variables to track active interviews
 active_interviews: Dict[str, Any] = {}
+
+@app.post("/agent/join")
+async def agent_join(request: AgentJoinRequest):
+    """Endpoint for agent to join interview with complete details"""
+    try:
+        print(f"🤖 Agent join request received")
+        print(f"📋 Room: {request.roomName}")
+        print(f"👤 Candidate: {request.candidateName} ({request.candidateId})")
+        print(f"💼 Job: {request.jobTitle} ({request.jobId})")
+        print(f"🤖 Agent ID: {request.agentId}")
+        
+        # Create and start AI agent with complete interview data
+        interview_data = {
+            'candidateName': request.candidateName,
+            'candidateEmail': request.candidateEmail,
+            'candidateSkills': request.candidateSkills,
+            'candidateExperience': request.candidateExperience,
+            'candidateProjects': request.candidateProjects,
+            'jobTitle': request.jobTitle,
+            'jobDescription': request.jobDescription,
+            'jobDepartment': request.jobDepartment,
+            'interviewMode': request.interviewMode,
+            'interviewLanguage': request.interviewLanguage,
+            'interviewDuration': request.interviewDuration,
+            'questionsCount': request.questionsCount,
+            'difficultyLevel': request.difficultyLevel,
+            'promptText': request.promptText,
+            'agentPrompt': request.agentPrompt,
+            'promptTemplateName': request.promptTemplateName
+        }
+        
+        # Note: You'll need to generate agent_token and get livekit_url from your config
+        # For now, using placeholders - update these based on your setup
+        agent = AIInterviewAgent(
+            room_name=request.roomName,
+            agent_token="",  # Generate from LiveKit
+            candidate_id=request.candidateId,
+            job_id=request.jobId,
+            livekit_url="",  # Get from config
+            interview_data=interview_data
+        )
+        
+        # Start agent in background
+        asyncio.create_task(agent.start_interview())
+        
+        # Store agent reference
+        active_interviews[request.candidateId] = agent
+        
+        return {
+            "success": True,
+            "message": "Agent join request received",
+            "sessionId": request.sessionId,
+            "roomName": request.roomName,
+            "agentStatus": "connecting"
+        }
+        
+    except Exception as e:
+        print(f"❌ Error in agent join: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/start-interview")
 async def start_interview(request: InterviewRequest):
@@ -97,12 +201,38 @@ async def end_interview(candidate_id: str):
     return {"success": False, "message": "Interview not found"}
 
 class AIInterviewAgent:
-    def __init__(self, room_name: str, agent_token: str, candidate_id: str, job_id: str, livekit_url: str):
+    def __init__(self, room_name: str, agent_token: str, candidate_id: str, job_id: str, livekit_url: str, interview_data: dict = None):
         self.room_name = room_name
         self.agent_token = agent_token
         self.candidate_id = candidate_id
         self.job_id = job_id
         self.livekit_url = livekit_url
+        
+        # Store complete interview data
+        self.interview_data = interview_data or {}
+        
+        # Extract details from interview_data
+        self.candidate_name = interview_data.get('candidateName', 'Candidate')
+        self.candidate_email = interview_data.get('candidateEmail', '')
+        self.candidate_skills = interview_data.get('candidateSkills', '')
+        self.candidate_experience = interview_data.get('candidateExperience', '')
+        self.candidate_projects = interview_data.get('candidateProjects', '')
+        
+        self.job_title = interview_data.get('jobTitle', '')
+        self.job_description = interview_data.get('jobDescription', '')
+        self.job_department = interview_data.get('jobDepartment', '')
+        
+        self.interview_mode = interview_data.get('interviewMode', 'video')
+        self.interview_language = interview_data.get('interviewLanguage', 'en')
+        self.interview_duration = interview_data.get('interviewDuration', 30)
+        self.questions_count = interview_data.get('questionsCount', 5)
+        self.difficulty_level = interview_data.get('difficultyLevel', 'medium')
+        
+        # Prompt template data
+        self.prompt_text = interview_data.get('promptText', {})
+        self.agent_prompt = interview_data.get('agentPrompt', {})
+        self.prompt_template_name = interview_data.get('promptTemplateName', '')
+        
         self.room = rtc.Room()
         self.is_connected = False
         self.current_question = None
@@ -142,6 +272,18 @@ class AIInterviewAgent:
     async def conduct_interview(self):
         """Main interview logic"""
         print(f"🎯 Starting interview with {len(self.questions)} questions")
+        print(f"👤 Candidate: {self.candidate_name} ({self.candidate_email})")
+        print(f"💼 Position: {self.job_title} - {self.job_department}")
+        print(f"⚙️ Settings: {self.interview_mode} mode, {self.interview_language} language, {self.interview_duration} min")
+        print(f"📝 Prompt Template: {self.prompt_template_name}")
+        
+        # Send greeting message if available
+        greeting = self.prompt_text.get('greeting_message', '') if self.prompt_text else ''
+        if not greeting:
+            greeting = f"Hello {self.candidate_name}, welcome to your interview for the {self.job_title} position!"
+        
+        await self.ask_question(greeting)
+        await asyncio.sleep(3)
         
         # Wait for candidate to be ready
         await asyncio.sleep(2)
@@ -247,18 +389,35 @@ class AIInterviewAgent:
         pass
     
     async def load_interview_questions(self, job_id: str):
-        """Load questions based on job ID"""
-        # Mock questions - replace with your database
-        questions = [
-            "Tell me about yourself and your background",
-            "Why are you interested in this position?",
-            "What are your greatest strengths?",
-            "Describe a challenging project you worked on",
-            "Where do you see yourself in 5 years?",
-            "Do you have any questions for us?"
-        ]
+        """Load questions based on job ID and prompt template"""
+        questions = []
         
-        print(f"📋 Loaded {len(questions)} questions for job {job_id}")
+        # Get questions from prompt_text JSONB
+        if self.prompt_text:
+            # Technical questions
+            if 'technical_questions' in self.prompt_text and self.prompt_text['technical_questions']:
+                questions.extend(self.prompt_text['technical_questions'])
+            
+            # Default questions
+            if 'default_questions' in self.prompt_text and self.prompt_text['default_questions']:
+                questions.extend(self.prompt_text['default_questions'])
+        
+        # If no questions in template, use default based on job
+        if not questions:
+            questions = [
+                f"Hello {self.candidate_name}, tell me about yourself and your background",
+                f"Why are you interested in the {self.job_title} position?",
+                f"What relevant experience do you have for this {self.job_department} role?",
+                "Describe a challenging project you worked on",
+                "What are your greatest strengths?",
+                "Do you have any questions for us?"
+            ]
+        
+        # Limit questions based on questions_count setting
+        questions = questions[:self.questions_count]
+        
+        print(f"📋 Loaded {len(questions)} questions for job {self.job_title} ({job_id})")
+        print(f"📋 Questions: {questions}")
         return questions
     
     async def complete_interview(self):

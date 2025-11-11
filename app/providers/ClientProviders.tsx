@@ -45,6 +45,61 @@ function TopProgress() {
   )
 }
 
+function DynamicFavicon() {
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return
+
+    const DEFAULT_ICON = '/favicon.svg'
+    const LOGO_STORAGE_KEY = 'branding_company_logo'
+
+    const applyFavicon = (iconUrl?: string | null) => {
+      const href = iconUrl && iconUrl.trim() !== '' ? iconUrl : DEFAULT_ICON
+      const rels = ['icon', 'shortcut icon', 'apple-touch-icon']
+      rels.forEach((rel) => {
+        let link = document.querySelector<HTMLLinkElement>(`link[rel='${rel}']`)
+        if (!link) {
+          link = document.createElement('link')
+          link.rel = rel
+          document.head.appendChild(link)
+        }
+        link.href = href
+      })
+    }
+
+    const getStoredLogo = () => {
+      try {
+        return localStorage.getItem(LOGO_STORAGE_KEY)
+      } catch {
+        return null
+      }
+    }
+
+    applyFavicon(getStoredLogo())
+
+    const handleBrandingUpdate = (event: Event) => {
+      const customEvent = event as CustomEvent<{ logoUrl?: string | null }>
+      const logoUrl = customEvent.detail?.logoUrl ?? getStoredLogo()
+      applyFavicon(logoUrl)
+    }
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === LOGO_STORAGE_KEY) {
+        applyFavicon(event.newValue)
+      }
+    }
+
+    window.addEventListener('branding:updated', handleBrandingUpdate as EventListener)
+    window.addEventListener('storage', handleStorage)
+
+    return () => {
+      window.removeEventListener('branding:updated', handleBrandingUpdate as EventListener)
+      window.removeEventListener('storage', handleStorage)
+    }
+  }, [])
+
+  return null
+}
+
 interface ClientProvidersProps {
   children: ReactNode
 }
@@ -53,6 +108,7 @@ export function ClientProviders({ children }: ClientProvidersProps) {
   return (
     <AuthProvider>
       <TopProgress />
+      <DynamicFavicon />
       <ErrorBoundary>
         {children}
       </ErrorBoundary>

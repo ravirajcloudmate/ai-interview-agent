@@ -34,10 +34,17 @@ export function ModuleContent({ module }: { module: string }) {
     setModuleLoading(false);
   }, [module]);
   // Redirect unauthenticated users to login (client-side) to avoid getting stuck on message
+  // Wait for auth to fully load before redirecting (prevent hard refresh redirect loop)
   useEffect(() => {
+    // Don't redirect immediately - wait a bit for session to load on hard refresh
     if (!loading && !user) {
-      console.log('⚠️ No user found, redirecting to login from module:', module);
-      router.replace('/auth/login');
+      // Add small delay to allow session from cookies to load
+      const redirectTimeout = setTimeout(() => {
+        console.log('⚠️ No user found after delay, redirecting to login from module:', module);
+        router.replace('/auth/login');
+      }, 1000); // 1 second delay to allow session recovery
+      
+      return () => clearTimeout(redirectTimeout);
     } else if (!loading && user) {
       console.log('✅ User authenticated, loading module:', module);
     }

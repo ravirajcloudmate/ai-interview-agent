@@ -1,181 +1,175 @@
-import { NextResponse } from 'next/server'
-import nodemailer from 'nodemailer'
+import { NextRequest, NextResponse } from 'next/server';
+import nodemailer from 'nodemailer';
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
-    console.log('Email API called');
-    
-    const body = await request.json()
-    console.log('Request body:', body);
-    
-    const { email, candidateName, interviewLink, jobTitle, companyName } = body
-    
-    if (!email || !interviewLink || !jobTitle) {
-      console.error('Missing required fields:', { email: !!email, interviewLink: !!interviewLink, jobTitle: !!jobTitle });
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
+    const { email, candidateName, interviewLink, jobTitle, companyName } = await request.json();
+
+    // Validate required fields
+    if (!email || !interviewLink) {
+      return NextResponse.json(
+        { error: 'Missing required fields' },
+        { status: 400 }
+      );
     }
 
-    console.log('Sending interview invitation email to:', email)
+    const smtpHost =
+      process.env.SMTP_HOST ||
+      process.env.EMAIL_HOST ||
+      (process.env.GMAIL_USER ? 'smtp.gmail.com' : undefined);
+    const smtpUser =
+      process.env.SMTP_USER || process.env.EMAIL_USER || process.env.GMAIL_USER;
+    const smtpPass =
+      process.env.SMTP_PASS ||
+      process.env.SMTP_PASSWORD ||
+      process.env.EMAIL_PASS ||
+      process.env.EMAIL_PASSWORD ||
+      process.env.GMAIL_PASS;
+    const smtpPort = parseInt(
+      process.env.SMTP_PORT || process.env.EMAIL_PORT || '587',
+      10
+    );
+    const smtpSecure =
+      process.env.SMTP_SECURE === 'true' ||
+      process.env.EMAIL_SECURE === 'true' ||
+      smtpPort === 465;
+    const gmailUser = process.env.GMAIL_USER || process.env.EMAIL_USER;
+    const gmailPass = process.env.GMAIL_PASS || process.env.EMAIL_PASS;
 
-    // Create email transporter
-    let transporter;
-    
-    // Try to use environment variables for email configuration
-    if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
-      // Production SMTP configuration
-      transporter = nodemailer.createTransport({
-        host: process.env.SMTP_HOST,
-        port: parseInt(process.env.SMTP_PORT || '587'),
-        secure: process.env.SMTP_SECURE === 'true',
-        auth: {
-          user: process.env.SMTP_USER,
-          pass: process.env.SMTP_PASS,
+    if ((!smtpHost || !smtpUser || !smtpPass) && (!gmailUser || !gmailPass)) {
+      return NextResponse.json(
+        { error: 'Email configuration is incomplete. Please set SMTP or Gmail credentials.' },
+        { status: 500 }
+      );
+    }
+
+    // Create email transporter (configure with your SMTP settings)
+    const transporter = nodemailer.createTransport(
+      smtpHost && smtpUser && smtpPass
+        ? {
+            host: smtpHost,
+            port: smtpPort,
+            secure: smtpSecure,
+            auth: {
+              user: smtpUser,
+              pass: smtpPass
+            }
+          }
+        : {
+            service: 'gmail',
+            auth: {
+              user: gmailUser,
+              pass: gmailPass
+            }
+          }
+    );
+
+    try {
+      await transporter.verify();
+    } catch (verifyError: any) {
+      console.error('❌ Email transporter verification failed:', verifyError);
+      return NextResponse.json(
+        {
+          error: 'Failed to verify email transporter configuration',
+          details: verifyError?.message || verifyError,
+          config: {
+            smtpHost: smtpHost ? 'provided' : 'missing',
+            smtpUser: smtpUser ? 'provided' : 'missing',
+            gmailConfigured: !!(gmailUser && gmailPass),
+            port: smtpPort,
+            secure: smtpSecure
+          }
         },
-      });
-    } else if (process.env.GMAIL_USER && process.env.GMAIL_PASS) {
-      // Gmail configuration
-      transporter = nodemailer.createTransport({
-        service: 'gmail',
-        auth: {
-          user: process.env.GMAIL_USER,
-          pass: process.env.GMAIL_PASS,
-        },
-      });
-    } else {
-      // Development: Use Ethereal Email (fake SMTP service)
-      console.log('Using Ethereal Email for development');
-      const testAccount = await nodemailer.createTestAccount();
+        { status: 500 }
+      );
+    }
+
+    // Email template
+    const emailHtml = `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: #e30d0d; color: white; padding: 20px; text-align: center; }
+    .content { padding: 30px; background: #f9f9f9; }
+    .button { display: inline-block; padding: 12px 30px; background: #e30d0d; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; }
+    .footer { text-align: center; padding: 20px; color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>AI Interview Invitation</h1>
+    </div>
+    <div class="content">
+      <h2>Hello ${candidateName || 'Candidate'}!</h2>
+      <p>You've been invited to participate in an AI-powered interview for the position of <strong>${jobTitle || 'Position'}</strong> at <strong>${companyName || 'our company'}</strong>.</p>
       
-      transporter = nodemailer.createTransport({
-        host: 'smtp.ethereal.email',
-        port: 587,
-        secure: false,
-        auth: {
-          user: testAccount.user,
-          pass: testAccount.pass,
-        },
-      });
-    }
+      <p>This is a modern, AI-assisted interview experience where you'll interact with our AI interviewer. The process is:</p>
+      <ul>
+        <li>Professional and conversational</li>
+        <li>Flexible and candidate-friendly</li>
+        <li>Designed to showcase your skills effectively</li>
+      </ul>
 
-    // Email content
-    const subject = `Interview Invitation - ${jobTitle} at ${companyName || 'Our Company'}`
-    const candidateDisplayName = candidateName || email.split('@')[0]
-    
-    const htmlContent = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta charset="utf-8">
-          <style>
-            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0; }
-            .content { background: #f8f9fa; padding: 30px; border-radius: 0 0 8px 8px; }
-            .button { display: inline-block; padding: 12px 30px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; margin: 20px 0; }
-            .footer { text-align: center; margin-top: 30px; color: #666; font-size: 14px; }
-            .highlight { background: #e3f2fd; padding: 15px; border-radius: 5px; margin: 15px 0; }
-          </style>
-        </head>
-        <body>
-          <div class="container">
-            <div class="header">
-              <h1>🎯 Interview Invitation</h1>
-              <p>You're invited for an AI-powered interview</p>
-            </div>
-            
-            <div class="content">
-              <h2>Hello ${candidateDisplayName}!</h2>
-              
-              <p>We're excited to invite you for an interview for the <strong>${jobTitle}</strong> position at <strong>${companyName || 'our company'}</strong>.</p>
-              
-              <div class="highlight">
-                <h3>🤖 About This Interview</h3>
-                <p>This is an AI-powered interview designed to assess your skills and experience. The interview is:</p>
-                <ul>
-                  <li>✅ Convenient - Take it at your own time</li>
-                  <li>✅ Fair - Standardized questions for all candidates</li>
-                  <li>✅ Efficient - Typically takes 20-45 minutes</li>
-                  <li>✅ Modern - Uses advanced AI for evaluation</li>
-                </ul>
-              </div>
-              
-              <div style="text-align: center; margin: 30px 0;">
-                <a href="${interviewLink}" class="button">🚀 Start Your Interview</a>
-              </div>
-              
-              <div class="highlight">
-                <h3>📋 What to Expect</h3>
-                <ul>
-                  <li>The interview will ask questions about your experience and skills</li>
-                  <li>You can take your time to think and respond thoughtfully</li>
-                  <li>Make sure you have a stable internet connection</li>
-                  <li>Use a quiet environment for the best experience</li>
-                </ul>
-              </div>
-              
-              <p><strong>Interview Link:</strong> <a href="${interviewLink}">${interviewLink}</a></p>
-              
-              <p>If you have any questions or need assistance, please don't hesitate to reach out to us.</p>
-              
-              <p>Best regards,<br>
-              The ${companyName || 'Hiring'} Team</p>
-            </div>
-            
-            <div class="footer">
-              <p>This interview invitation was sent by ${companyName || 'our company'}. If you did not expect this email, please ignore it.</p>
-            </div>
-          </div>
-        </body>
-      </html>
-    `
+      <p>Click the button below to start your interview:</p>
+      <a href="${interviewLink}" class="button">Start Interview</a>
+      
+      <p>Or copy this link: <br><code>${interviewLink}</code></p>
+
+      <p><strong>Important notes:</strong></p>
+      <ul>
+        <li>Ensure you have a stable internet connection</li>
+        <li>Use a device with camera and microphone</li>
+        <li>Find a quiet, well-lit location</li>
+        <li>Allow browser permissions for camera/microphone</li>
+      </ul>
+
+      <p>We look forward to learning more about you!</p>
+      
+      <p>Best regards,<br>${companyName || 'The Team'}</p>
+    </div>
+    <div class="footer">
+      <p>This is an automated message. Please do not reply to this email.</p>
+    </div>
+  </div>
+</body>
+</html>
+    `;
 
     // Send email
-    const mailOptions = {
-      from: process.env.SMTP_FROM || process.env.GMAIL_USER || 'noreply@interview-ai.com',
-      to: email,
-      subject: subject,
-      html: htmlContent,
+    try {
+      await transporter.sendMail({
+        from: `"${companyName || 'AI Interview'}" <${process.env.SMTP_FROM || smtpUser || gmailUser}>`,
+        to: email,
+        subject: `Interview Invitation - ${jobTitle || 'Position'}`,
+        html: emailHtml
+      });
+    } catch (sendError: any) {
+      console.error('❌ Email sending error:', sendError);
+      return NextResponse.json(
+        {
+          error: sendError?.message || 'Failed to send invitation',
+          response: sendError?.response,
+          code: sendError?.code,
+          command: sendError?.command
+        },
+        { status: 500 }
+      );
     }
 
-    console.log('Attempting to send email with options:', {
-      from: mailOptions.from,
-      to: mailOptions.to,
-      subject: mailOptions.subject
+    return NextResponse.json({
+      success: true,
+      message: 'Interview invitation sent successfully'
     });
 
-    const info = await transporter.sendMail(mailOptions)
-    console.log('Interview invitation email sent successfully:', info.messageId)
-
-    // Log preview URL for development
-    if (process.env.NODE_ENV === 'development') {
-      try {
-        const previewURL = nodemailer.getTestMessageUrl(info)
-        if (previewURL) {
-          console.log('Preview URL:', previewURL)
-        }
-      } catch (previewError) {
-        console.log('Could not generate preview URL:', previewError)
-      }
-    }
-
-    return NextResponse.json({ 
-      success: true, 
-      messageId: info.messageId,
-      previewUrl: process.env.NODE_ENV === 'development' ? nodemailer.getTestMessageUrl(info) : null
-    })
-
-  } catch (error) {
-    console.error('Error sending interview invitation email:', error)
-    console.error('Error details:', {
-      message: error instanceof Error ? error.message : 'Unknown error',
-      stack: error instanceof Error ? error.stack : undefined,
-      name: error instanceof Error ? error.name : undefined
-    });
-    
-    return NextResponse.json({ 
-      error: 'Failed to send email',
-      details: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString()
-    }, { status: 500 })
+  } catch (error: any) {
+    console.error('❌ Email route unexpected error:', error);
+    return NextResponse.json(
+      { error: error.message || 'Failed to send invitation' },
+      { status: 500 }
+    );
   }
 }

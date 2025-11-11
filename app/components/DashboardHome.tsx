@@ -12,9 +12,12 @@ import {
   CheckCircle,
   AlertCircle,
   Calendar,
-  Loader2
+  Loader2,
+  Bot,
+  Mail
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { DashboardSkeleton } from './SkeletonLoader';
 
@@ -24,6 +27,7 @@ interface DashboardHomeProps {
 }
 
 export function DashboardHome({ user, globalRefreshKey }: DashboardHomeProps) {
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [companyIdState, setCompanyIdState] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState<number>(0);
@@ -345,6 +349,20 @@ export function DashboardHome({ user, globalRefreshKey }: DashboardHomeProps) {
           .order('created_at', { ascending: false })
           .limit(2));
 
+        const recentAgentsResult = await fetchWithFallback('prompt_templates', supabase
+          .from('prompt_templates')
+          .select('id, name, created_at')
+          .eq('company_id', companyId)
+          .order('created_at', { ascending: false })
+          .limit(2));
+
+        const recentInvitationsResult = await fetchWithFallback('interview_invitations', supabase
+          .from('interview_invitations')
+          .select('id, candidate_name, candidate_email, job_postings(job_title), created_at')
+          .eq('company_id', companyId)
+          .order('created_at', { ascending: false })
+          .limit(2));
+
         // Fallback to jobs table if job_postings doesn't exist
         let recentJobsData = recentJobsResult.data;
         if (recentJobsResult.error && recentJobsResult.error.code === '42P01') {
@@ -364,6 +382,8 @@ export function DashboardHome({ user, globalRefreshKey }: DashboardHomeProps) {
 
         const recentInterviews = recentInterviewsResult.data;
         const recentJobs = recentJobsData;
+        const recentAgents = recentAgentsResult.data;
+        const recentInvitations = recentInvitationsResult.data;
 
         // Combine and format recent activity
         const activities = [];
@@ -385,6 +405,26 @@ export function DashboardHome({ user, globalRefreshKey }: DashboardHomeProps) {
             role: job.job_title || job.title || 'Unknown Position',
             time: getTimeAgo(job.created_at),
             status: job.status || 'active'
+          })));
+        }
+
+        if (recentAgents) {
+          activities.push(...recentAgents.map((agent: any) => ({
+            type: 'agent',
+            candidate: 'New AI Agent Created',
+            role: agent.name || 'AI Agent',
+            time: getTimeAgo(agent.created_at),
+            status: 'created'
+          })));
+        }
+
+        if (recentInvitations) {
+          activities.push(...recentInvitations.map((invite: any) => ({
+            type: 'invite',
+            candidate: invite.candidate_name || invite.candidate_email || 'Candidate Invited',
+            role: invite.job_postings?.job_title || 'Interview Invitation',
+            time: getTimeAgo(invite.created_at),
+            status: 'invited'
           })));
         }
 
@@ -558,7 +598,28 @@ export function DashboardHome({ user, globalRefreshKey }: DashboardHomeProps) {
     };
   }, []);
 
-  // Helper function to calculate time ago
+const getActivityVisuals = (activity: any) => {
+  switch (activity.type) {
+    case 'job':
+      return { Icon: Briefcase, color: 'text-blue-600' };
+    case 'agent':
+      return { Icon: Bot, color: 'text-purple-600' };
+    case 'invite':
+      return { Icon: Mail, color: 'text-red-600' };
+    case 'interview':
+      if (activity.status === 'Completed' || activity.status === 'hired') {
+        return { Icon: CheckCircle, color: 'text-green-600' };
+      }
+      if (activity.status === 'In Progress' || activity.status === 'in-progress') {
+        return { Icon: Clock, color: 'text-orange-600' };
+      }
+      return { Icon: Clock, color: 'text-muted-foreground' };
+    default:
+      return { Icon: FileText, color: 'text-muted-foreground' };
+  }
+};
+
+// Helper function to calculate time ago
   const getTimeAgo = (dateString: string) => {
     const date = new Date(dateString);
     const now = new Date();
@@ -591,29 +652,40 @@ export function DashboardHome({ user, globalRefreshKey }: DashboardHomeProps) {
 
           {/* Quick Actions */}
           <div className="flex flex-wrap gap-4">
-            <Button size="lg" className="gap-2" asChild>
-              <a href="/?module=jobs&action=create">
+            <Button
+              size="lg"
+              className="gap-2"
+              onClick={() => router.push('/jobs')}
+            >
               <Plus className="h-4 w-4" />
               Create Job Posting
-              </a>
             </Button>
-            <Button variant="outline" size="lg" className="gap-2" asChild>
-              <a href="/?module=interviews">
-                <Users className="h-4 w-4" />
-                Start Interview
-              </a>
+            <Button
+              variant="outline"
+              size="lg"
+              className="gap-2"
+              onClick={() => router.push('/interviews')}
+            >
+              <Users className="h-4 w-4" />
+              Start Interview
             </Button>
-            <Button variant="outline" size="lg" className="gap-2" asChild>
-              <a href="/?module=interviews&action=invite">
+            <Button
+              variant="outline"
+              size="lg"
+              className="gap-2"
+              onClick={() => router.push('/interviews?action=invite')}
+            >
               <Users className="h-4 w-4" />
               Invite Candidate
-              </a>
             </Button>
-            <Button variant="outline" size="lg" className="gap-2" asChild>
-              <a href="/?module=reports">
+            <Button
+              variant="outline"
+              size="lg"
+              className="gap-2"
+              onClick={() => router.push('/reports')}
+            >
               <FileText className="h-4 w-4" />
               View Reports
-              </a>
             </Button>
           </div>
         </div>
@@ -684,24 +756,22 @@ export function DashboardHome({ user, globalRefreshKey }: DashboardHomeProps) {
         <Card>
           <CardHeader>
             <CardTitle>Recent Activity</CardTitle>
-            <CardDescription>Latest interviews and job postings</CardDescription>
+            <CardDescription>Latest updates from jobs, interviews, and AI agents</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
               {recentActivity.length > 0 ? (
                 recentActivity.map((activity, index) => (
                 <div key={index} className="flex items-center gap-3">
-                  {activity.status === 'completed' && <CheckCircle className="h-4 w-4 text-green-600" />}
-                  {activity.status === 'in-progress' && <Clock className="h-4 w-4 text-orange-600" />}
-                    {activity.status === 'pending' && <Clock className="h-4 w-4 text-orange-600" />}
-                  {activity.status === 'active' && <Briefcase className="h-4 w-4 text-blue-600" />}
-                  {activity.status === 'ready' && <FileText className="h-4 w-4 text-purple-600" />}
-                    {activity.status === 'hired' && <CheckCircle className="h-4 w-4 text-green-600" />}
+                  {(() => {
+                    const { Icon, color } = getActivityVisuals(activity);
+                    return <Icon className={`h-4 w-4 ${color}`} />;
+                  })()}
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium truncate">{activity.candidate}</p>
                     <p className="text-xs text-muted-foreground">{activity.role}</p>
                   </div>
-                  <span className="text-xs text-muted-foreground">{activity.time}</span>
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">{activity.time}</span>
                 </div>
                 ))
               ) : (

@@ -8,12 +8,14 @@ DROP TABLE IF EXISTS interview_invitations CASCADE;
 CREATE TABLE interview_invitations (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    company_branding_id UUID REFERENCES company_branding(id) ON DELETE SET NULL,
     job_id UUID REFERENCES job_postings(id) ON DELETE CASCADE, -- Can also reference jobs table
     created_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     
     -- Candidate information
     candidate_email VARCHAR(255) NOT NULL,
     candidate_name VARCHAR(255),
+    summary TEXT,
     
     -- Interview configuration
     interview_link VARCHAR(500) NOT NULL UNIQUE, -- Unique interview URL
@@ -64,6 +66,7 @@ CREATE TRIGGER interview_invitations_updated_at_trigger
 
 -- Create indexes for better performance
 CREATE INDEX idx_interview_invitations_company_id ON interview_invitations(company_id);
+CREATE INDEX idx_interview_invitations_company_branding_id ON interview_invitations(company_branding_id);
 CREATE INDEX idx_interview_invitations_job_id ON interview_invitations(job_id);
 CREATE INDEX idx_interview_invitations_created_by ON interview_invitations(created_by);
 CREATE INDEX idx_interview_invitations_candidate_email ON interview_invitations(candidate_email);
@@ -92,6 +95,7 @@ DECLARE
     new_token VARCHAR(100);
     new_link VARCHAR(500);
     job_template TEXT;
+    branding_id UUID;
 BEGIN
     -- Generate unique token
     new_token := encode(gen_random_bytes(32), 'hex');
@@ -112,9 +116,16 @@ BEGIN
         job_template := p_ai_template;
     END IF;
     
+    -- Locate company branding record
+    SELECT id INTO branding_id
+    FROM company_branding
+    WHERE company_id = p_company_id
+    LIMIT 1;
+
     -- Insert invitation
     INSERT INTO interview_invitations (
         company_id,
+        company_branding_id,
         job_id,
         created_by,
         candidate_email,
@@ -130,6 +141,7 @@ BEGIN
         difficulty_level
     ) VALUES (
         p_company_id,
+        branding_id,
         p_job_id,
         p_created_by,
         p_candidate_email,

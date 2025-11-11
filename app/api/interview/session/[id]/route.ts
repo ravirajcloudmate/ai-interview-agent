@@ -3,9 +3,10 @@ import { supabase } from '@/lib/supabase';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
-  const sessionId = params.id;
+  const { id } = await context.params;
+  const sessionId = id;
 
   try {
     console.log('📋 Fetching session:', sessionId);
